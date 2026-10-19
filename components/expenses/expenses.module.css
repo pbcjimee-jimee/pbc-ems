@@ -1,0 +1,8 @@
+.records { display:grid; gap:1rem; }
+.record { display:grid; grid-template-columns:minmax(12rem,2fr) minmax(8rem,1fr) minmax(8rem,1fr) auto; gap:1rem; padding:1rem; border:1px solid var(--color-border); background:var(--color-surface); border-radius:var(--radius); align-items:start; }
+.record p { margin:0.35rem 0 0; overflow-wrap:anywhere; }
+.amount { text-align:right; font-variant-numeric:tabular-nums; }
+.stack { display:grid; gap:1.5rem; }
+.filters { display:flex; flex-wrap:wrap; align-items:end; gap:0.75rem; margin-bottom:1rem; }
+.filters > div { flex:1 1 10rem; }
+@media(max-width:48rem) { .record { grid-template-columns:minmax(0,1fr) auto; } .record > :nth-child(2),.record > :nth-child(3) { grid-column:1 / -1; } .amount { grid-column:2; grid-row:1; } }

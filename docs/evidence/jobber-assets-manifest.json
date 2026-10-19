@@ -1,0 +1,37 @@
+{
+  "observed_on": "2026-10-16",
+  "timezone": "Australia/Sydney",
+  "method": "Public static assets identified from the rendered Jobber page; downloaded without authentication; never executed",
+  "files": [
+    {
+      "file": "jobber-assets/index-ByBej6ru.js",
+      "source": "https://secure.getjobber.com/assets_remix/index-ByBej6ru.js",
+      "bytes": 349015,
+      "sha256": "40ed1f4c2531f4a3603d11c33e97e994e0031a6b3a50b9955a68dd18aee05df3"
+    },
+    {
+      "file": "jobber-feature-assets/status-Nbf_12V8.js",
+      "source": "https://secure.getjobber.com/assets_remix/status-Nbf_12V8.js",
+      "bytes": 344,
+      "sha256": "975789787a62408a7a71d22ae6af9d0a6aa7afa8ef7400c26369ad2ee8861374"
+    },
+    {
+      "file": "jobber-feature-assets/statusLabel-C2BqFVFL.js",
+      "source": "https://secure.getjobber.com/assets_remix/statusLabel-C2BqFVFL.js",
+      "bytes": 1124,
+      "sha256": "3982168fcc653c1411a819bd9d451a6c0ef520248ff422da4cfbc90196dae808"
+    },
+    {
+      "file": "jobber-feature-assets/Quotes.graphql-Dt8_2qKK.js",
+      "source": "https://secure.getjobber.com/assets_remix/Quotes.graphql-Dt8_2qKK.js",
+      "bytes": 15359,
+      "sha256": "373034d3a709e3eac4540cf83bee5fd91e84d2cbf910a433ca2ecef4152f091a"
+    },
+    {
+      "file": "jobber-feature-assets/ClientStatus-Cld8kzw0.js",
+      "source": "https://secure.getjobber.com/assets_remix/ClientStatus-Cld8kzw0.js",
+      "bytes": 727,
+      "sha256": "89843e06b082e2de235a45c52e2c3e959b8b30c0169ef728eb4746fd490c1d20"
+    }
+  ]
+}

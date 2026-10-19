@@ -1,0 +1,18 @@
+import { randomUUID } from "node:crypto";
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { requireMembership } from "@/lib/auth/permissions";
+import { clientOptions } from "@/lib/clients/service";
+import { readRequest } from "@/lib/requests/service";
+import { requestStatusLabels } from "@/lib/requests/schemas";
+import { RequestForm, ArchiveRequestForm } from "@/components/requests/request-form";
+import { Status } from "@/components/ui/status";
+export default async function RequestDetailPage({ params, searchParams }: { params: Promise<{id:string}>; searchParams: Promise<Record<string,string | string[] | undefined>> }) {
+  const { id } = await params; const search = await searchParams; const actor = await requireMembership(); const request = await readRequest(id); if (!request) notFound(); const admin = actor.role === "admin"; const options = admin ? await clientOptions() : null;
+  return <><Link href="/requests">← Requests</Link><div className="page-header"><div><h1>{request.title}</h1><Status tone={request.status === "closed" ? "neutral" : "info"}>{requestStatusLabels[request.status]}{request.archivedAt ? " · Archived" : ""}</Status></div>{admin && !request.archivedAt ? <div className="toolbar"><Link className="button" href={`/quotes/new?requestId=${id}`}>Create quote</Link><Link className="button button-secondary" href={`/jobs/new?requestId=${id}`}>Create job</Link><Link className="button button-secondary" href={`/schedule?requestId=${id}`}>Schedule assessment</Link></div> : null}</div>
+    {search.saved ? <p className="alert" role="status">Changes saved.</p> : null}<section className="panel" style={{ marginBottom: 24 }}><h2>Customer and site</h2><p><Link href={`/clients/${request.clientId}`}>{request.clientName}</Link></p><p>{request.propertyLabel ?? "No site selected"}</p>{request.address ? <p style={{ whiteSpace: "pre-wrap" }}>{request.address}</p> : null}<h3>Request details</h3><p style={{ whiteSpace: "pre-wrap" }}>{request.description || "No additional details."}</p><h3>Preferred work date</h3><p>{request.preferredDate ?? "Not set"}</p><h3>Planned assessment · Australia/Sydney</h3><p>{request.assessmentAt ? new Intl.DateTimeFormat("en-AU", { timeZone: "Australia/Sydney", dateStyle: "full", timeStyle: "short" }).format(new Date(request.assessmentAt)) : "Not planned"}</p></section>
+    {admin && options ? <details style={{ marginBottom: 24 }}><summary>Edit request</summary><RequestForm request={request} {...options} commandKey={randomUUID()} /></details> : null}
+    <section className="panel" style={{ marginBottom: 24 }}><h2>Related work</h2>{admin ? <><h3>Quotes</h3>{request.quotes.length ? <ul>{request.quotes.map(quote => <li key={quote.id}><Link href={`/quotes/${quote.id}`}>{quote.title}</Link> · {quote.status.replaceAll("_", " ")}</li>)}</ul> : <p>No quotes linked yet. A draft does not change the request to Quoted.</p>}</> : null}<h3>Jobs</h3>{request.jobs.length?<ul>{request.jobs.map(job=><li key={job.id}><Link href={'/jobs/'+job.id}>{job.title}</Link> · {job.status.replaceAll('_',' ')}</li>)}</ul>:<p>No jobs linked yet.</p>}<h3>Assessment visits</h3>{request.visits.length ? <ul>{request.visits.map(visit => <li key={visit.id}><Link href={`/schedule/${visit.id}`}>{visit.title}</Link> · {visit.status.replaceAll("_", " ")}</li>)}</ul> : <p>No assessment visits scheduled yet.</p>}</section>
+    {admin ? <section className="panel"><h2>{request.archivedAt ? "Restore request" : "Archive request"}</h2><p>Keep the request and its linked work on record.</p><ArchiveRequestForm request={request} commandKey={randomUUID()} /></section> : null}
+  </>;
+}

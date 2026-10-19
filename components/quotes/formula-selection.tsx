@@ -1,0 +1,6 @@
+'use client';
+import type { AreaFormulaSelections, FormulaSelection, FormulaNumber } from '@/lib/quotes/types';
+import styles from './quotes.module.css';
+export const initialSelections:AreaFormulaSelections={interior:{selectedMin:1,selectedMax:1},exterior:{selectedMin:1,selectedMax:1},roof:{selectedMin:1,selectedMax:1}};
+export function FormulaSelectionFields({value,onChange,name}:{value:FormulaSelection;onChange:(v:FormulaSelection)=>void;name:string}){return <>{(['selectedMin','selectedMax'] as const).map((field,i)=><label className={'field '+styles.formula} key={field}><span>{name} {i?'Max':'Min'}</span><select value={value[field]} onChange={e=>onChange({...value,[field]:Number(e.target.value) as FormulaNumber})}>{[1,2,3,4,5].map(n=><option key={n} value={n}>F{n}</option>)}</select></label>)}</>;}
+export function FormulaSelection({value,onChange}:{value:AreaFormulaSelections;onChange:(v:AreaFormulaSelections)=>void}){return <div><p>Subtotal uses the average of the two selected formulas. F3 and F5 use actual materials; Roof uses its own labour rate.</p>{(['interior','exterior','roof'] as const).map(scope=><div key={scope} className={styles.scope}><strong>{scope[0].toUpperCase()+scope.slice(1)}</strong><FormulaSelectionFields name={scope} value={value[scope]} onChange={v=>onChange({...value,[scope]:v})}/></div>)}</div>;}

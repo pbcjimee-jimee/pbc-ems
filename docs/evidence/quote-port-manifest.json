@@ -1,0 +1,163 @@
+{
+  "emsAdditions": [
+    "lib/quotes/calculation.ts",
+    "lib/quotes/commercial-totals.ts",
+    "tests/quotes/snapshot.test.ts",
+    "tests/quotes/commercial-totals.test.ts"
+  ],
+  "sourceAccess": "read-only",
+  "sourceCommit": "f4c97d5b1ae971150294f9b1b1e798c47cb2daa3",
+  "sourceRepository": "C:/Users/kjm12/OneDrive/바탕 화면/Project/PBC-Quote-cal",
+  "hashAlgorithm": "SHA-256",
+  "rules": [
+    "F3/F5 use materialActual from original code.",
+    "Assigned main rows use areaBreakdown.finalSubtotal/finalTotal; legacy rows without any assignment use original server fallback.",
+    "Row labour is sum(workingDays * labourPerDay); original header fallback only when no row has labour.",
+    "Normal option totals do not automatically increase main quote totals.",
+    "Timber signed difference subtracts individually rounded full-quote subtotals.",
+    "Customer totals include visible line_item rows with selected optional rows only.",
+    "Customer extended line is rounded HALF_UP to cents; sum rounded taxable extensions, GST rounded HALF_UP to cents; final is subtotal plus GST.",
+    "EMS stored-number boundary validation rejects nonfinite, negative internal values, >2 decimal precision, money beyond NUMERIC(10,2).",
+    "Historical product seed is not represented as verified current prices."
+  ],
+  "files": [
+    {
+      "changes": "No intended behavioral change.",
+      "target": "lib/calculator.ts",
+      "sourceSha256": "f5fe228b4c25636f84053a3b9bbefcd9c6dbe17bac256c67be0f665f51d4d602",
+      "source": "lib/calculator.ts",
+      "targetSha256": "f5fe228b4c25636f84053a3b9bbefcd9c6dbe17bac256c67be0f665f51d4d602"
+    },
+    {
+      "changes": "No intended behavioral change.",
+      "target": "lib/quote-labour.ts",
+      "sourceSha256": "22c910bd2a9c8789074d82e72bf7f08381f1d869451ef18e9d3e2a9b17a8f77f",
+      "source": "lib/quote-labour.ts",
+      "targetSha256": "22c910bd2a9c8789074d82e72bf7f08381f1d869451ef18e9d3e2a9b17a8f77f"
+    },
+    {
+      "changes": "Only type import redirected from components/quote-form/types to lib/quotes/types; arithmetic unchanged.",
+      "target": "lib/quote-calculation-totals.ts",
+      "sourceSha256": "56632efba46576871be69e75ac3944560a86f23f36c462c87bf830a2ca454dde",
+      "source": "lib/quote-calculation-totals.ts",
+      "targetSha256": "67b246cd69f063516c07d815c3d1b080644fca66878d51d0db7ace150c2aed28"
+    },
+    {
+      "changes": "Only type import redirected from components/quote-form/types to lib/quotes/types; arithmetic unchanged.",
+      "target": "lib/quote-paint-comparison.ts",
+      "sourceSha256": "b01e822864898a42aa109319f1281238644ab7b6bfad303704351095e9037d90",
+      "source": "lib/quote-paint-comparison.ts",
+      "targetSha256": "d13dbac7614d2a7ea70c82f64ed9f3f3d2f48c7e54094f1f5a6c2c8677a14599"
+    },
+    {
+      "changes": "No intended behavioral change.",
+      "target": "lib/paint-comparison-types.ts",
+      "sourceSha256": "73e9f744a7f671d4134aedf62873b5fbfbda2e8f0fe1ea2e2d422b45267ea4a6",
+      "source": "lib/paint-comparison-types.ts",
+      "targetSha256": "73e9f744a7f671d4134aedf62873b5fbfbda2e8f0fe1ea2e2d422b45267ea4a6"
+    },
+    {
+      "changes": "No intended behavioral change.",
+      "target": "lib/public-line-money.ts",
+      "sourceSha256": "59105405b76343d5ddfabf20fb6114e4e0a8a4fbc73c04b5e815001b04548bfb",
+      "source": "lib/public-line-money.ts",
+      "targetSha256": "59105405b76343d5ddfabf20fb6114e4e0a8a4fbc73c04b5e815001b04548bfb"
+    },
+    {
+      "changes": "Moved pure calculation types; removed AreaRecord/UI result and external integration identifiers; renamed public customer lines; added strongly typed EMS transport DTOs.",
+      "target": "lib/quotes/types.ts",
+      "sourceSha256": "f03819c74d955a52d4afe278e2d0e75168fb7d1b01ef972bcf68fe5ccc60e815",
+      "source": "components/quote-form/types.ts",
+      "targetSha256": "dc21aff54cbb6a0174ad952b76f66fda382f696b69e2ce58c36968c85db9532e"
+    },
+    {
+      "changes": "Imports redirected to pure EMS modules; calculation unchanged.",
+      "target": "lib/quotes/options.ts",
+      "sourceSha256": "426c0e49c3127f711f78909faf62a0bec249fa89103c0f786976598600d32c83",
+      "source": "components/quote-form/quote-option-totals.ts",
+      "targetSha256": "cbf1c7f98a14318efc5c423944e7e95ac1b0cb1cf79a5ffb588da5556dca1686"
+    },
+    {
+      "changes": "Unchanged product record and RRP normalization.",
+      "target": "lib/products/types.ts",
+      "sourceSha256": "828d985297442941f054870d545b1d59528e04be02c98475d679ba895043af10",
+      "source": "lib/products/types.ts",
+      "targetSha256": "828d985297442941f054870d545b1d59528e04be02c98475d679ba895043af10"
+    },
+    {
+      "changes": "102 original products preserved; appended explicit historical seed metadata (currentPricesVerified=false).",
+      "target": "lib/products/dulux-paints.ts",
+      "sourceSha256": "b3e402544a47372b561daf06d6e8592b3fbdf73a15a5699dbdb81dea2d49a1c9",
+      "source": "lib/products/dulux-paints.ts",
+      "targetSha256": "d8bfa8aa2104ee141aa5c2199c100811517d007c42f1acf4fc25f23c80a4749b"
+    },
+    {
+      "changes": "Only imports adapted to the pure EMS module paths.",
+      "target": "tests/quotes/calculator.test.ts",
+      "sourceSha256": "5781f00e084e2366b8397404e2809a408c7aec3f68c8697f859c14f83a71b7a4",
+      "source": "tests/calculator.test.ts",
+      "targetSha256": "5781f00e084e2366b8397404e2809a408c7aec3f68c8697f859c14f83a71b7a4"
+    },
+    {
+      "changes": "Only imports adapted to the pure EMS module paths.",
+      "target": "tests/quotes/quote-labour.test.ts",
+      "sourceSha256": "3cbf1dd3e0beaa64552c0c1de9e94375f84f1deef23d2623f480f8c7c254a712",
+      "source": "tests/quote-labour.test.ts",
+      "targetSha256": "5dfe02ae2ecd2b807876fe323f672ce8473c8bc3c0a468f0c52fd64f7132da87"
+    },
+    {
+      "changes": "Only imports adapted to the pure EMS module paths.",
+      "target": "tests/quotes/quote-calculation-totals.test.ts",
+      "sourceSha256": "f3ca3bec25de1ee81b4876f6ba6b689906b69bfdb0d4cf5b0915ca2a3473d29d",
+      "source": "tests/quote-calculation-totals.test.ts",
+      "targetSha256": "05699a9594b40da94fab2c838036b73e2758704d9bd2addedcbef19b6d7b1024"
+    },
+    {
+      "changes": "Only imports adapted to the pure EMS module paths.",
+      "target": "tests/quotes/quote-paint-comparison.test.ts",
+      "sourceSha256": "9a5fe54d26bc9d9ee22bd58e87d870df83303c41665b4673c2cdb609ff517df1",
+      "source": "tests/quote-paint-comparison.test.ts",
+      "targetSha256": "0a717ee120e140af4bf00633d44cae30de0be37f7b39031d70f27ea15fb0b464"
+    },
+    {
+      "changes": "Only imports adapted to the pure EMS module paths.",
+      "target": "tests/quotes/public-line-money.test.ts",
+      "sourceSha256": "d3641a8d8390979695e0db8d9aa107bebd20ce9a93db96daba4dc96804f5881c",
+      "source": "tests/public-line-money.test.ts",
+      "targetSha256": "d3641a8d8390979695e0db8d9aa107bebd20ce9a93db96daba4dc96804f5881c"
+    },
+    {
+      "changes": "Unchanged sample fixture; not a real historical quote.",
+      "target": "tests/quotes/fixtures/historical-quotes.ts",
+      "sourceSha256": "1a5069f85e8f566b02e64faa028bd5b79ab260dad277479855564d6ce5ef5b3b",
+      "source": "tests/fixtures/historical-quotes.ts",
+      "targetSha256": "1a5069f85e8f566b02e64faa028bd5b79ab260dad277479855564d6ce5ef5b3b"
+    }
+  ],
+  "verification": {
+    "standardEmsNpmCommands": "npm run test:run -- tests/quotes: 7 files / 167 passed; npm run typecheck: exit 0",
+    "scopedStrictTypecheck": "passed",
+    "testsPassed": 167,
+    "testFiles": 7,
+    "runnerVersion": "EMS Vitest 4.1.12"
+  },
+  "emsAdditionHashes": [
+    {
+      "targetSha256": "119a13ad538d7924d387f95270a6d581e500da9d32381a4f2e112baf95ae1690",
+      "target": "lib/quotes/calculation.ts"
+    },
+    {
+      "targetSha256": "f3b793bd78ecc68044ad9c58af09c745f847d28d6f6bf5dfc20edf4ec73bdcfc",
+      "target": "lib/quotes/commercial-totals.ts"
+    },
+    {
+      "targetSha256": "c621921425581a6ba48b7523cc93087a16bb5ce1dad2d16485917905f15bccf1",
+      "target": "tests/quotes/snapshot.test.ts"
+    },
+    {
+      "targetSha256": "8acc5a746945f2cf013370bf1c0cc15ca7916bef0ab26291bb01f79935cd0c06",
+      "target": "tests/quotes/commercial-totals.test.ts"
+    }
+  ],
+  "reviewFix": "P2 active Aqua raw input bypass: validate Interior finish product prices and override quantity/workingDays/labourPerDay with the same stored-number guard before calculation and snapshot copy. Dormant alternatives and unused inherit values remain preserved. 30 regression cases observed RED then GREEN; valid boundaries covered."
+}

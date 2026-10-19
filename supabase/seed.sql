@@ -1,0 +1,2 @@
+-- Auth users and explicitly labelled local sample records are provisioned only
+-- by `node scripts/local-db.mjs setup`; production migrations contain no accounts.

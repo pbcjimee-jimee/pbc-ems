@@ -1,0 +1,2 @@
+import{ar as e,ir as t}from"./uiFramework-C8cBHhwZ.js";e();var n=new Set([t.loading,t.setVariables,t.fetchMore]),r=new Set([t.refetch,t.setVariables]);function i({count:e,networkStatus:i}){return n.has(i)&&e===0?`initial`:i===t.fetchMore&&e>0?`loadingMore`:r.has(i)?`filtering`:`none`}export{i as t};
+//# sourceMappingURL=status-Nbf_12V8.js.map

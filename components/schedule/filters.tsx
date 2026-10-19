@@ -1,0 +1,6 @@
+import {Button} from '@/components/ui/button';
+import Link from 'next/link';
+import type {ScheduleView} from '@/lib/schedule/types';
+export function ScheduleFilters({date,view,workers,workerId,unassigned,showCancelled}:{date:string;view:ScheduleView;workers:{id:string;name:string}[];workerId:string;unassigned:boolean;showCancelled:boolean}){
+  return <form className="toolbar" method="get"><input type="hidden" name="view" value={view}/><div className="field"><label htmlFor="schedule-date">Date · Sydney</label><input id="schedule-date" type="date" name="date" defaultValue={date} required/></div><div className="field"><label htmlFor="schedule-worker">Worker</label><select id="schedule-worker" name="workerId" defaultValue={workerId}><option value="">All visible workers</option>{workers.map(w=><option value={w.id} key={w.id}>{w.name}</option>)}</select></div><label><input type="checkbox" name="unassigned" value="true" defaultChecked={unassigned}/> Unassigned visits only</label><label><input type="checkbox" name="showCancelled" value="true" defaultChecked={showCancelled}/> Include cancelled</label><Button type="submit" variant="secondary">Apply</Button><Link href="/schedule">Reset</Link></form>;
+}

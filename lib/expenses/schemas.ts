@@ -1,0 +1,4 @@
+import { z } from 'zod';
+export { commandMetaSchema, invalidResult } from '@/lib/clients/schemas';
+export const expenseSchema = z.object({ id: z.uuid().optional(), jobId: z.uuid().nullable().optional(), title: z.string().trim().min(1).max(200), category: z.string().trim().min(1).max(100), amount: z.string().regex(/^\d{1,16}(\.\d{1,2})?$/, 'Enter an AUD amount with at most two decimal places.'), occurredOn: z.iso.date(), notes: z.string().max(10000).default(''), receiptPath: z.string().max(300).nullable().optional() }).strict();
+export const expenseFilterSchema = z.object({ search: z.string().max(200).default(''), category: z.string().max(100).default(''), from: z.union([z.iso.date(), z.literal('')]).default(''), to: z.union([z.iso.date(), z.literal('')]).default(''), jobId: z.preprocess(value => value === '' ? undefined : value, z.uuid().optional()), archive: z.enum(['active', 'archived', 'all']).default('active') });

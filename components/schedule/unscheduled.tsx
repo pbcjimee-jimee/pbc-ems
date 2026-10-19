@@ -1,0 +1,3 @@
+import Link from 'next/link';
+import styles from './schedule.module.css';
+export function Unscheduled({jobs}:{jobs:{id:string;title:string}[]}){return <section className={`panel ${styles.unscheduled}`} aria-labelledby="unscheduled-heading"><h2 id="unscheduled-heading">Unscheduled work <span className="field-hint">{jobs.length}</span></h2>{jobs.length?<ul>{jobs.map(j=><li key={j.id}><Link href={`/jobs/${j.id}`}>{j.title}</Link><Link className="button button-secondary" href={`/schedule/new?jobId=${j.id}`}>Schedule visit</Link></li>)}</ul>:<p className="field-hint">All active jobs have a visit planned, or there are no unscheduled jobs.</p>}</section>;}
