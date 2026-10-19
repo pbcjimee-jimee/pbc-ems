@@ -11,10 +11,16 @@
 
 | 표기 | 의미 |
 | --- | --- |
-| **팀장** | Claude Code 전용. Codex에 쓰기 위임 금지 |
-| **Codex 가능** | 작업 지시서에서 명시 할당하면 Codex가 쓸 수 있음 |
-| **팀장 기본** | 기본은 팀장. 지시서에 명시적으로 위임한다고 적으면 Codex 가능 |
+| **팀장** | 메인 Claude 전용. 위임 금지 |
+| **ui-ux** | `ui-ux` 서브에이전트 담당 (Opus 5.5 / high, 메인 저장소) |
+| **test** | `test` 서브에이전트 담당 (Opus 5.5 / high, 메인 저장소) |
+| **Codex 가능** | 작업 지시서에서 명시 할당하면 Codex가 쓸 수 있음 (worktree) |
 | **읽기만** | 누구도 쓰지 않음 (생성물·로컬 데이터) |
+
+주체별 실행 위치가 다르다는 점이 중요하다.
+
+- `ui-ux`·`test`·팀장 → **메인 저장소 공유.** 파일이 겹치면 순차 실행해야 한다.
+- Codex → **worktree 격리.** 파일이 겹쳐도 병렬 가능하나 병합 비용이 든다.
 
 ---
 
@@ -27,7 +33,10 @@
 | `PRODUCT.md` | 팀장 | 제품 요구사항의 단일 진실 공급원 |
 | `DESIGN.md` | 팀장 | 디자인 시스템 |
 | `README.md` | 팀장 | |
-| `docs/orchestration/**` | 팀장 | `results/`는 예외 — §5 참조 |
+| `docs/orchestration/**` | 팀장 | `results/`는 예외 — §6 참조 |
+| `.claude/settings.json` | 팀장 | 메인 Claude 모델(Fable 5.1 / high) |
+| `.claude/agents/**` | 팀장 | `ui-ux`·`test` 역할 정의(Opus 5.5 / high) |
+| `scripts/worktree-setup.ps1` | 팀장 | worktree 준비 도구 |
 | `package.json` / `package-lock.json` | 팀장 | 의존성 변경은 요청만 받음 |
 | `tsconfig.json` | 팀장 | |
 | `next.config.ts` | 팀장 | |
@@ -39,42 +48,44 @@
 
 ---
 
-## 2. UI 레이어 — 팀장 기본
+## 2. UI 레이어 — ui-ux 담당
 
-디자인 일관성은 단일 주체가 유지한다. Codex 위임은 예외적으로만 한다.
+디자인 일관성은 `ui-ux` 서브에이전트가 유지한다. **Codex에는 위임하지 않는다.**
 
 | 경로 | 소유 | 비고 |
 | --- | --- | --- |
-| `app/layout.tsx` | 팀장 전용 | 루트 레이아웃 |
-| `app/globals.css` | 팀장 전용 | 디자인 토큰 |
-| `app/(ems)/layout.tsx` | 팀장 전용 | EMS 셸 |
-| `app/(ems)/**/page.tsx` | 팀장 기본 | 도메인 단위로 위임 가능 |
-| `app/(ems)/**/error.tsx`, `loading.tsx` | 팀장 기본 | |
-| `app/**/*.module.css` | 팀장 전용 | |
-| `app/login/**`, `app/setup/**` | 팀장 전용 | 인증 화면 |
-| `components/shell/**` | 팀장 전용 | 앱 셸·아이콘·내비게이션 |
-| `components/ui/**` | 팀장 전용 | 공통 프리미티브. 여기가 바뀌면 전체가 흔들린다 |
-| `components/documents/**` | 팀장 전용 | 고객 문서 출력물 |
-| `components/<도메인>/**` | 팀장 기본 | 도메인 단위로 위임 가능 |
+| `app/layout.tsx` | ui-ux | 루트 레이아웃. 전역 영향 |
+| `app/globals.css` | ui-ux | 디자인 토큰. 변경 시 영향 화면 점검 필수 |
+| `app/(ems)/layout.tsx` | ui-ux | EMS 셸 |
+| `app/(ems)/**/page.tsx` | ui-ux | |
+| `app/(ems)/**/error.tsx`, `loading.tsx` | ui-ux | |
+| `app/**/*.module.css` | ui-ux | |
+| `app/login/**`, `app/setup/**` | ui-ux | 인증 화면. 로직은 `lib/auth/**`(팀장) |
+| `components/shell/**` | ui-ux | 앱 셸·아이콘·내비게이션. 전역 영향 |
+| `components/ui/**` | ui-ux | 공통 프리미티브. **여기가 바뀌면 전체가 흔들린다** |
+| `components/documents/**` | ui-ux | 고객 문서 출력물 |
+| `components/<도메인>/**` | ui-ux | |
+
+`components/ui/**`와 `components/shell/**`, `app/globals.css`는 전역 영향이 크다. `ui-ux`는 수정 전에 영향 범위를 확인하고, 변경 후 영향받은 화면을 함께 점검한다.
 
 ### 2.1 Server Actions — 경계 주의
 
-`app/(ems)/*/actions.ts`는 UI와 서비스 레이어의 경계다.
+`app/(ems)/*/actions.ts`는 UI와 서비스 레이어의 경계다. **기본은 팀장**이고, UI 흐름 중심 변경이면 `ui-ux`에 명시 위임한다.
 
 | 경로 | 소유 |
 | --- | --- |
-| `app/(ems)/clients/actions.ts` | 팀장 기본 |
-| `app/(ems)/requests/actions.ts` | 팀장 기본 |
-| `app/(ems)/quotes/actions.ts` | 팀장 기본 |
-| `app/(ems)/jobs/actions.ts` | 팀장 기본 |
-| `app/(ems)/invoices/actions.ts` | 팀장 기본 |
-| `app/(ems)/expenses/actions.ts` | 팀장 기본 |
-| `app/(ems)/schedule/actions.ts` | 팀장 기본 |
-| `app/(ems)/timesheets/actions.ts` | 팀장 기본 |
-| `app/(ems)/settings/actions.ts` | 팀장 기본 |
+| `app/(ems)/clients/actions.ts` | 팀장 (ui-ux 위임 가능) |
+| `app/(ems)/requests/actions.ts` | 팀장 (ui-ux 위임 가능) |
+| `app/(ems)/quotes/actions.ts` | 팀장 (ui-ux 위임 가능) |
+| `app/(ems)/jobs/actions.ts` | 팀장 (ui-ux 위임 가능) |
+| `app/(ems)/invoices/actions.ts` | 팀장 (ui-ux 위임 가능) |
+| `app/(ems)/expenses/actions.ts` | 팀장 (ui-ux 위임 가능) |
+| `app/(ems)/schedule/actions.ts` | 팀장 (ui-ux 위임 가능) |
+| `app/(ems)/timesheets/actions.ts` | 팀장 (ui-ux 위임 가능) |
+| `app/(ems)/settings/actions.ts` | 팀장 (ui-ux 위임 가능) |
 | `app/login/actions.ts` | 팀장 전용 (인증) |
 
-Codex가 서비스 레이어 시그니처를 바꾸면 **actions.ts 수정은 하지 말고 필요한 변경을 보고**한다. 팀장이 반영한다.
+Codex나 `ui-ux`가 서비스 레이어 시그니처 변경이 필요하다고 판단하면 **actions.ts를 수정하지 말고 필요한 변경을 보고**한다. 팀장이 반영한다.
 
 ---
 
@@ -143,17 +154,22 @@ lib/products/**
 
 ---
 
-## 4. 테스트 — Codex 가능 (동시 실행 주의)
+## 4. 테스트 — test 담당
 
 | 경로 | 소유 | 비고 |
 | --- | --- | --- |
-| `tests/helpers/**` | 팀장 전용 | 모든 테스트가 의존 |
+| `tests/**` (아래 예외 제외) | test | |
+| `tests/helpers/**` | test ⚠️ | 모든 테스트가 의존. 변경 시 전체 영향 확인 |
+| `tests/operating-quote-parity.test.ts` | test ⚠️ | **회귀 기준선 — 기대값 변경 금지** |
+| `tests/quotes/fixtures/historical-quotes.ts` | test ⚠️ | **회귀 기준선 — 기대값 변경 금지** |
 | `tests/integration/transaction.test.ts` | 팀장 전용 | 인프라 테스트 |
 | `tests/integration/workspace.test.ts` | 팀장 전용 | 전역 설정 |
-| `tests/env.test.ts` | 팀장 전용 | |
-| `tests/operating-quote-parity.test.ts` | 팀장 전용 | 회귀 기준선 |
-| `tests/quotes/fixtures/**` | 팀장 전용 | 회귀 기준선 |
-| 그 외 `tests/**` | Codex 가능 | 도메인 묶음에 따라 배정 |
+| `tests/env.test.ts` | 팀장 전용 | 환경 변수 계약 |
+| `supabase/tests/ems_rls.test.sql` | 팀장 전용 | RLS 보안. test 에 명시 위임 가능 |
+
+Codex(`implementer`)가 로직과 함께 테스트를 작성할 수도 있다. 그 경우 지시서의 담당 파일에 해당 테스트 경로를 넣는다. 다만 **테스트 전략·실패 판정·회귀 기준선 관리는 `test` 역할**이다.
+
+`test`는 **제품 코드를 수정하지 않는다.** 테스트가 드러낸 버그는 보고하고, 팀장이 `implementer` 또는 `ui-ux`에 배정한다.
 
 ### 4.1 실행 간섭 경고
 
@@ -214,16 +230,37 @@ npx vitest run --no-file-parallelism --exclude "tests/integration/**"
 
 ## 7. 병렬 배치 예시
 
-### 권장 — 경로가 갈려 병합이 자동으로 끝나는 배치
+### 권장 — 3주체가 겹치지 않는 배치
 
 ```
-세션 A (implementer, wt/T-001) : lib/quotes/**    + tests/quotes/calculator.test.ts
-세션 B (implementer, wt/T-002) : lib/schedule/**  + tests/schedule.test.ts
-세션 C (analyst, main, RO)     : 읽기만 — 인보이스 설계 분석
-동시 진행 (팀장, main)          : components/clients/**, app/(ems)/clients/page.tsx
+Codex A (implementer, wt/T-001) : lib/quotes/**     구현        [worktree]
+Codex B (implementer, wt/T-002) : lib/schedule/**   구현        [worktree]
+Codex C (analyst, RO)           : 인보이스 설계 분석           [main, 읽기만]
+ui-ux                           : components/clients/**,
+                                  app/(ems)/clients/page.tsx   [main]
+test                            : tests/schedule.test.ts       [main]
+팀장                            : 조율·검토만 (파일 안 건드림)  [main]
 ```
 
-A·B는 경로가 분리되어 `git merge`가 충돌 없이 끝난다. C는 read-only, 팀장은 main에서 UI 작업. worktree가 파일을 격리하므로 팀장 작업과도 섞이지 않는다.
+- Codex A·B는 worktree로 격리되어 서로, 그리고 main과 충돌하지 않는다.
+- `ui-ux`(`components/**`·`app/**`)와 `test`(`tests/**`)는 main을 공유하지만 **경로가 갈려 안전**하다.
+- 팀장은 이 동안 파일을 건드리지 않는다.
+
+### 위험 — main 공유 주체끼리 겹치는 배치
+
+```
+ui-ux : components/quotes/quote-editor.tsx       [main]
+test  : components/quotes/quote-editor.tsx 수정  [main]   ← 같은 파일, git 격리 없음
+```
+
+`ui-ux`와 `test`는 **같은 작업 공간에서 동시에 같은 파일을 쓰면 서로의 변경을 덮어쓴다.** Codex와 달리 worktree가 없어 복구 수단이 없다. 경로가 겹치면 **반드시 순차 실행**한다.
+
+```
+팀장  : app/(ems)/quotes/actions.ts 수정
+ui-ux : app/(ems)/quotes/actions.ts 수정                  ← 같은 파일
+```
+
+팀장도 같은 공간이다. 서브에이전트가 도는 동안 그들의 담당 파일을 건드리지 않는다.
 
 ### 허용되지만 비용이 드는 배치
 
@@ -273,9 +310,27 @@ worktree 덕분에 **작업 중에는 서로를 깨뜨리지 않는다.** 하지
 
 ---
 
-## 9. 전역 자원 — worktree로 격리되지 않음
+## 9. 전역 자원 — 격리되지 않음
 
-파일 소유권과 무관하게, 아래는 **모든 worktree에 즉시 영향**을 준다. 팀장 전용이다.
+### 9.1 메인 저장소 공유 — git 격리 없음
+
+팀장, `ui-ux`, `test`는 **같은 작업 공간**에서 실행된다. Codex worktree와 달리 git 격리가 없으므로, 같은 파일을 동시에 쓰면 **서로의 변경을 덮어쓰고 복구할 수 없다.**
+
+| 주체 | 기본 영역 | 겹칠 수 있는 지점 |
+| --- | --- | --- |
+| `ui-ux` | `app/**`, `components/**` | `app/(ems)/*/actions.ts` (팀장과) |
+| `test` | `tests/**` | 컴포넌트 테스트를 작성할 때 (`ui-ux`와) |
+| 팀장 | `lib/**` 공유 모듈, 설정, 마이그레이션 | 양쪽 모두 |
+
+규칙:
+
+1. 팀장은 배치 전에 `ui-ux`와 `test`의 파일 범위가 겹치지 않음을 확인한다.
+2. 겹치면 **순차 실행**한다.
+3. 서브에이전트가 도는 동안 팀장은 그들의 담당 파일을 건드리지 않는다.
+
+### 9.2 머신 전역 자원 — worktree로도 격리되지 않음
+
+파일 소유권과 무관하게, 아래는 **모든 worktree와 서브에이전트에 즉시 영향**을 준다. 팀장 전용이다.
 
 | 자원 | 공유 방식 | 위험 | 규칙 |
 | --- | --- | --- | --- |

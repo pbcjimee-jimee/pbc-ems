@@ -1,12 +1,46 @@
 # 작업 지시서 템플릿
 
-Claude Code가 Codex에 작업을 넘길 때 사용한다. `docs/orchestration/tasks/T-<번호>-<slug>.md`로 복사해 채운다.
+**이 문서는 Codex 위임용이다.** 팀장이 `docs/orchestration/tasks/T-<번호>-<slug>.md`로 복사해 채운다.
 
-작성 원칙: **Codex는 이 문서 하나만 읽고 작업을 시작한다.** 프로젝트 맥락을 모른다고 가정하고 쓴다.
+작성 원칙: **Codex는 이 문서 하나만 읽고 작업을 시작한다.** 별도 프로세스라 대화 맥락이 전달되지 않으므로, 프로젝트 맥락을 모른다고 가정하고 쓴다.
+
+## Claude 서브에이전트는 지시서 파일이 필요 없다
+
+`ui-ux`와 `test`는 역할 정의(`.claude/agents/*.md`)에 작업 원칙·금지 사항·검증 명령이 이미 들어 있다. Agent 프롬프트에 작업별 내용만 담으면 된다.
+
+```
+Agent(subagent_type: "ui-ux", prompt: """
+요구사항: Clients 목록에 상태 필터를 추가한다.
+배경: 현재 전체 목록만 보여 활성/비활성 구분이 안 된다.
+담당 파일:
+  - components/clients/client-list.tsx
+  - app/(ems)/clients/page.tsx
+완료 조건:
+  - 상태 필터(전체/활성/비활성)가 URL 쿼리에 반영된다
+  - 필터 변경 시 목록이 갱신되고 빈 결과에 빈 상태가 표시된다
+  - 키보드로 필터를 조작할 수 있고 포커스가 보인다
+제약: lib/clients/** 는 읽기만. 서비스 변경이 필요하면 보고.
+""")
+```
+
+```
+Agent(subagent_type: "test", prompt: """
+범위: lib/schedule/dates.ts 의 주차 계산에 단위 테스트를 추가한다.
+담당 파일: tests/schedule.test.ts
+완료 조건:
+  - 월요일 시작 주차 경계, 월말 걸침, DST 전환일을 다룬다
+  - Australia/Sydney 기준으로 검증한다
+제약: 통합 테스트는 실행하지 않는다. 제품 코드 버그를 찾으면 고치지 말고 보고.
+""")
+```
+
+큰 작업이면 이력 보존을 위해 `tasks/`에 지시서를 남기되, 호출은 프롬프트로 한다.
+
+독립적인 서브에이전트는 **한 메시지에 여러 Agent 호출**을 담아 동시 실행한다. 단 `ui-ux`와 `test`는 메인 저장소를 공유하므로 **파일 범위가 겹치지 않을 때만** 동시 실행한다.
 
 ---
 
-## 템플릿 (아래를 복사)
+## Codex 작업 지시서 템플릿 (아래를 복사)
 
 ```markdown
 # T-000: <한 줄 제목>
@@ -58,7 +92,7 @@ npx vitest run --no-file-parallelism --exclude "tests/integration/**"
 - **`npm run test:integration` 및 `npm run test:run` 실행** — 로컬 DB 를 리셋해
   다른 세션을 깨뜨린다. 통합 테스트는 작성만 하고 실행하지 않는다.
 - **`supabase db reset` 등 DB 스키마 변경** — 팀장 전용
-- UI 컴포넌트 수정 (`app/**`, `components/**`) — 팀장이 담당
+- UI 컴포넌트 수정 (`app/**`, `components/**`) — `ui-ux` 서브에이전트가 담당
 - `supabase/migrations/**` 작성 — SQL 초안만 보고
 - 리팩터링·정리 작업 — 요구사항에 없으면 하지 않는다
 
@@ -83,7 +117,7 @@ git commit -m "T-000: <요약>"
 
 ## 역할별 실행 설정 (복사용)
 
-쓰기 역할은 **worktree**에서, 읽기 역할은 **main**에서 실행한다.
+Codex 쓰기 역할은 **worktree**에서, 읽기 역할은 **main**에서 실행한다.
 
 | 역할 | 작업 폴더 | worktree 필요 |
 | --- | --- | --- |
@@ -91,6 +125,8 @@ git commit -m "T-000: <요약>"
 | `explorer` | main (`.../Project/PBC EMS`) | ❌ |
 | `implementer` | `C:/Users/kjm12/pbc-ems-worktrees/<ID>` | ✅ |
 | `quick_edit` | `C:/Users/kjm12/pbc-ems-worktrees/<ID>` | ✅ |
+
+Claude 서브에이전트(`ui-ux`, `test`)는 항상 main에서 실행되며 지시서 파일이 필요 없다(위 참조).
 
 ### analyst — 설계·분석·리뷰·QA
 
@@ -171,7 +207,7 @@ explorer
 
 ## 실행 명령 생성
 
-지시서를 작성한 뒤 Claude Code가 실행한다. 지시서와 결과는 항상 **main 쪽 경로**에 둔다(이력을 한곳에 모으기 위해).
+지시서를 작성한 뒤 팀장이 실행한다. 지시서와 결과는 항상 **main 쪽 경로**에 둔다(이력을 한곳에 모으기 위해).
 
 ```bash
 PBC="C:/Users/kjm12/OneDrive/바탕 화면/Project/PBC EMS"
@@ -222,7 +258,12 @@ codex exec -C "$PBC" -s read-only \
 
 | 실수 | 결과 | 교정 |
 | --- | --- | --- |
-| worktree를 만들지 않고 쓰기 작업을 main에 띄운다 | 팀장 작업과 섞여 격리 실패 | `worktree-setup.ps1` 선행 |
+| UI 작업을 Codex 지시서로 만든다 | 디자인 일관성 붕괴 | `ui-ux` 서브에이전트에 위임 |
+| 테스트 전략·판정을 Codex에 맡긴다 | 회귀 기준선 오판 | `test` 서브에이전트에 위임 |
+| `ui-ux`와 `test`를 같은 파일에 동시 투입 | main 공유라 서로 덮어씀 (복구 불가) | 파일 범위 분리 또는 순차 실행 |
+| 서브에이전트가 도는 동안 팀장이 같은 파일 수정 | 변경 손실 | 담당 파일을 건드리지 않는다 |
+| Codex 지시서용 템플릿을 서브에이전트에 쓴다 | 중복·혼동 | 서브에이전트는 Agent 프롬프트로 |
+| worktree를 만들지 않고 Codex 쓰기 작업을 main에 띄운다 | 팀장·서브에이전트 작업과 섞임 | `worktree-setup.ps1` 선행 |
 | `codex exec --worktree`를 쓴다 | `node_modules`·`.env.local` 부재로 검증 전부 실패 | 스크립트로 준비한 worktree를 `-C`로 지정 |
 | 검증 명령에 `npm run test:run`을 넣는다 | 통합 테스트가 로컬 DB를 리셋해 다른 세션 파괴 | `--exclude "tests/integration/**"` 형태로 |
 | `1 skipped`를 통과로 본다 | 견적 회귀 기준선이 검증되지 않음 | 12 passed 가 정상. skip이면 멈추고 보고 |
@@ -232,4 +273,3 @@ codex exec -C "$PBC" -s read-only \
 | 완료 조건이 "정상 동작" | 검증 불가, 재작업 | "X 입력 → Y 반환" 형태로 |
 | 범위 밖을 안 적는다 | 요청 안 한 리팩터링이 섞인다 | 금지 항목을 명시 |
 | quick_edit에 설계 판단을 맡긴다 | 중도 인계로 왕복 | implementer로 바로 보낸다 |
-| UI 작업을 Codex에 넘긴다 | 디자인 일관성 붕괴 | 팀장이 직접 구현 |
