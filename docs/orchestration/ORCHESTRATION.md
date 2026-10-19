@@ -4,7 +4,9 @@ Claude Code(팀장)와 Codex 실행 세션(구현 담당)이 **같은 프로젝�
 
 - 적용 범위: `C:\Users\kjm12\OneDrive\바탕 화면\Project\PBC EMS`
 - 작성일: 2026-10-20 (Australia/Sydney)
+- 개정: 2026-10-20 — git 저장소 전환에 따라 worktree 격리 방식으로 변경 (§2)
 - 관련 문서: [TASK-TEMPLATE.md](./TASK-TEMPLATE.md), [OWNERSHIP.md](./OWNERSHIP.md)
+- 도구: `scripts/worktree-setup.ps1`
 
 ---
 
@@ -54,84 +56,182 @@ Codex 실행 세션 — 구현 담당
 
 ## 2. 실행 방식
 
-### 2.1 원칙: 같은 폴더, worktree 없음
+### 2.1 원칙: worktree로 파일 격리, DB는 공유
 
-이 프로젝트는 **git 저장소가 아니다**(`.git` 없음). 따라서
+이 프로젝트는 git 저장소다(`main`, origin: `pbcjimee-jimee/pbc-ems`). 쓰기 작업은 **각자의 worktree**에서 실행해 파일 충돌을 git 수준에서 차단한다.
 
-- `codex exec --worktree`는 사용하지 않는다. 사용 시 실패하거나 의도와 다른 격리가 발생한다.
-- 모든 세션은 `-C "<프로젝트 루트>"`로 **동일 폴더**에서 실행한다.
-- 파일 충돌은 git이 막아주지 않는다. **§3 파일 소유권 규칙이 유일한 방어선이다.**
-- `--skip-git-repo-check`를 반드시 붙인다.
+```
+C:\Users\kjm12\OneDrive\바탕 화면\Project\PBC EMS    ← main. 팀장 작업 공간
+C:\Users\kjm12\pbc-ems-worktrees\T-001              ← 브랜치 wt/T-001. Codex 세션 A
+C:\Users\kjm12\pbc-ems-worktrees\T-002              ← 브랜치 wt/T-002. Codex 세션 B
+```
 
-> 향후 `git init`을 하면 `--worktree` 기반 격리로 전환할 수 있다. 그때는 이 절을 개정한다.
+worktree 위치는 **OneDrive 밖**이다. OneDrive 안에 두면 동기화가 `node_modules` junction과 빌드 산출물을 긁어 충돌 파일을 만들고 느려진다.
 
-### 2.2 호출 명령 (Claude Code → Codex)
+격리되는 것과 되지 않는 것을 구분해야 한다.
+
+| 자원 | 격리 | 결과 |
+| --- | --- | --- |
+| 소스 파일 | ✅ worktree별 독립 | 같은 파일 동시 수정 가능 |
+| git 브랜치·커밋 | ✅ 브랜치별 독립 | 병합 시점에 충돌 확인 |
+| **로컬 Postgres** | ❌ **공유** | 통합 테스트 동시 실행 불가 — §2.5 |
+| `node_modules` | ❌ 공유 (junction) | 읽기 전용이라 안전. 의존성 변경은 팀장 전용 |
+| `.local/` | ❌ 공유 (junction) | 읽기 전용 데이터 |
+| `.next/` | ✅ worktree별 | `npm run dev` 동시 실행 시 포트만 분리 |
+
+**`--worktree` 플래그는 쓰지 않는다.** Codex가 자체 관리하는 worktree에는 `node_modules`와 `.env.local`이 없어 검증이 전부 실패한다. 대신 `scripts/worktree-setup.ps1`로 준비한 worktree를 `-C`로 지정한다.
+
+### 2.2 worktree 준비
+
+```powershell
+# 생성 — junction 연결, .env.local 복사, 검증까지 자동
+.\scripts\worktree-setup.ps1 -Name T-001
+
+# 목록
+.\scripts\worktree-setup.ps1 -List
+
+# 정리 (커밋되지 않은 변경이 있으면 확인을 요구한다)
+.\scripts\worktree-setup.ps1 -Name T-001 -Remove
+```
+
+스크립트가 하는 일:
+
+1. `C:\Users\kjm12\pbc-ems-worktrees\<Name>`에 `wt/<Name>` 브랜치로 worktree 생성
+2. `node_modules`, `.local` → **junction** (694MB 복사 회피, 관리자 권한 불필요)
+3. `.env.local` → **복사** (worktree별로 수정될 수 있어 링크하지 않음)
+4. `typecheck` + 단위 테스트를 즉시 실행해 설정이 올바른지 확인
+
+4번이 중요하다. 아래 함정을 잡기 위한 것이다.
+
+> **함정: 조용히 스킵되는 회귀 테스트**
+>
+> `tests/operating-quote-parity.test.ts`는 `.local/operating-cases.json`을 읽고, 파일이 없으면
+> `describe.skipIf`로 **조용히 스킵**된다. 이 테스트는 과거 실제 견적과의 계산 일치를 검증하는
+> 회귀 기준선이다.
+>
+> `.local` junction 없이 worktree를 만들면 테스트가 **11 passed | 1 skipped**가 되는데
+> 초록불이라 통과한 것처럼 보인다. 정상은 **12 passed**다. 견적 엔진을 바꿨는데 회귀를
+> 놓칠 수 있다. 스크립트가 skip을 감지하면 경고한다.
+
+### 2.3 호출 명령 (Claude Code → Codex)
 
 Codex의 `agents/*.toml`은 **Codex 세션 내부 서브에이전트** 정의다. 외부에서 `codex exec`로 호출할 때는 상속되지 않으므로, 모델과 effort를 **매 호출마다 명시**한다.
 
 ```bash
 PBC="C:/Users/kjm12/OneDrive/바탕 화면/Project/PBC EMS"
-TASK="docs/orchestration/tasks/T-001-quote-engine.md"
-OUT="docs/orchestration/results/T-001.md"
+WT="C:/Users/kjm12/pbc-ems-worktrees/T-001"
 
 codex exec \
-  -C "$PBC" \
-  --skip-git-repo-check \
+  -C "$WT" \
   -s workspace-write \
   -c model="gpt-6.1-sol" \
   -c model_reasoning_effort="high" \
-  -o "$PBC/$OUT" \
-  "$(cat "$PBC/$TASK")"
+  -o "$PBC/docs/orchestration/results/T-001.md" \
+  "$(cat "$PBC/docs/orchestration/tasks/T-001-quote-engine.md")"
 ```
 
-역할별 `-c` 값:
+- `-C`는 **worktree 경로**. 지시서와 결과는 `$PBC`(main) 쪽에 두어 이력을 한곳에 모은다.
+- `--skip-git-repo-check`는 더 이상 필요 없다(git 저장소가 되었으므로).
 
-| 역할 | `-c model=` | `-c model_reasoning_effort=` | `-s` |
-| --- | --- | --- | --- |
-| `analyst` | `gpt-6-astra` | `xhigh` | `read-only` |
-| `implementer` | `gpt-6.1-sol` | `high` | `workspace-write` |
-| `quick_edit` | `gpt-6-luna` | `high` | `workspace-write` |
-| `explorer` | `gpt-6-astra` | `high` | `read-only` |
+역할별 값:
 
-`analyst`와 `explorer`는 `read-only` 샌드박스로 실행한다. 역할 정의상 파일을 수정하지 않으므로, 샌드박스로 강제해 사고를 막는다.
+| 역할 | `-c model=` | `-c model_reasoning_effort=` | `-s` | 실행 위치 |
+| --- | --- | --- | --- | --- |
+| `analyst` | `gpt-6-astra` | `xhigh` | `read-only` | main 직접 (worktree 불필요) |
+| `implementer` | `gpt-6.1-sol` | `high` | `workspace-write` | **worktree** |
+| `quick_edit` | `gpt-6-luna` | `high` | `workspace-write` | **worktree** |
+| `explorer` | `gpt-6-astra` | `high` | `read-only` | main 직접 (worktree 불필요) |
 
-### 2.3 병렬 실행
+`analyst`와 `explorer`는 파일을 수정하지 않으므로 worktree를 만들지 않고 main에서 `read-only`로 실행한다. worktree 생성 비용(약 20초)을 아끼고, 읽는 대상이 최신 상태라는 이점도 있다.
 
-독립 작업은 한 번에 띄운다. Claude Code는 각 `codex exec`를 **백그라운드**로 실행하고 결과 파일을 수거한다.
+### 2.4 병렬 실행
+
+쓰기 세션은 각자의 worktree에서, 읽기 세션은 main에서 동시에 띄운다.
 
 ```bash
-# 예: 3개 작업 동시 실행
-codex exec -C "$PBC" --skip-git-repo-check -s workspace-write \
-  -c model="gpt-6.1-sol" -c model_reasoning_effort="high" \
-  -o "$PBC/docs/orchestration/results/T-001.md" \
-  "$(cat "$PBC/docs/orchestration/tasks/T-001-quote-engine.md")" &
+PBC="C:/Users/kjm12/OneDrive/바탕 화면/Project/PBC EMS"
+R="$PBC/docs/orchestration/results"
+T="$PBC/docs/orchestration/tasks"
 
-codex exec -C "$PBC" --skip-git-repo-check -s workspace-write \
+# 쓰기 2개 — 각자 worktree (미리 worktree-setup.ps1 로 준비)
+codex exec -C "C:/Users/kjm12/pbc-ems-worktrees/T-001" -s workspace-write \
   -c model="gpt-6.1-sol" -c model_reasoning_effort="high" \
-  -o "$PBC/docs/orchestration/results/T-002.md" \
-  "$(cat "$PBC/docs/orchestration/tasks/T-002-timesheet-api.md")" &
+  -o "$R/T-001.md" "$(cat "$T/T-001-quote-engine.md")" &
 
-codex exec -C "$PBC" --skip-git-repo-check -s read-only \
+codex exec -C "C:/Users/kjm12/pbc-ems-worktrees/T-002" -s workspace-write \
+  -c model="gpt-6.1-sol" -c model_reasoning_effort="high" \
+  -o "$R/T-002.md" "$(cat "$T/T-002-timesheet-api.md")" &
+
+# 읽기 1개 — main 에서 직접
+codex exec -C "$PBC" -s read-only \
   -c model="gpt-6-astra" -c model_reasoning_effort="xhigh" \
-  -o "$PBC/docs/orchestration/results/T-003.md" \
-  "$(cat "$PBC/docs/orchestration/tasks/T-003-invoice-design.md")" &
+  -o "$R/T-003.md" "$(cat "$T/T-003-invoice-design.md")" &
 
 wait
 ```
 
-병렬 제약:
+병렬 제약 (worktree 전환으로 완화됨):
 
-- **동시 쓰기 세션은 최대 3개.** 그 이상은 파일 충돌 위험과 검토 부담이 급증한다.
-- 같은 파일을 쓰는 작업은 **절대 병렬로 띄우지 않는다.** 순차로 돌린다.
-- `read-only` 세션(`analyst`, `explorer`)은 개수 제한 없이 병렬 가능하다.
-- 쓰기 세션이 도는 동안 Claude Code는 **해당 작업의 소유 파일을 건드리지 않는다.** UI 작업은 겹치지 않는 파일에서만 진행한다.
+- **동시 쓰기 세션 최대 5개.** 이전 3개 제한은 파일 충돌 위험 때문이었고, worktree가 그걸 제거했다. 상한은 이제 검토 부담과 머신 자원이 결정한다.
+- **같은 파일을 쓰는 작업도 병렬 가능하다.** 충돌은 병합 시점에 git이 알려준다. 단 병합 비용이 들므로, 소유권이 명확히 갈리는 작업을 우선 배치한다(§3).
+- `read-only` 세션은 개수 제한 없이 병렬 가능하다.
+- **통합 테스트는 절대 동시 실행하지 않는다** — §2.5.
+- 팀장은 main에서 UI 작업을 계속한다. worktree와 파일이 격리되므로 제약이 없다.
 
-### 2.4 이어하기
+### 2.5 통합 테스트: worktree로 해결되지 않는 유일한 문제
 
-후속 지시는 새 세션을 띄우지 말고 기존 스레드를 이어간다.
+`tests/helpers/database.ts`의 `resetFixtures()`는 **DB 전체를 리셋**한다. 그리고 모든 worktree의 `.env.local`이 같은 로컬 Postgres(`127.0.0.1`)를 가리킨다.
+
+즉 worktree 두 개가 `npm run test:integration`을 동시에 돌리면 **서로의 픽스처를 지우고 양쪽 모두 알 수 없는 이유로 실패한다.** git worktree는 파일을 격리하지만 DB는 격리하지 못한다.
+
+규칙:
+
+1. 통합 테스트가 필요한 작업의 지시서에는 **"통합 테스트는 작성만 하고 실행하지 않는다"**고 적는다.
+2. 팀장이 병합 후 main에서 `npm run test:integration`을 **1회 일괄 실행**한다.
+3. 단위 테스트(`tests/integration/**` 제외)는 DB를 쓰지 않으므로 worktree에서 자유롭게 병렬 실행 가능하다.
 
 ```bash
-codex exec resume --last -C "$PBC" --skip-git-repo-check \
+# worktree 안에서 Codex가 실행해도 안전한 범위
+npx vitest run --no-file-parallelism --exclude "tests/integration/**"
+# 정상 결과: Test Files 12 passed (12) / Tests 192 passed
+# 1 skipped 가 보이면 .local junction 문제 — §2.2 함정 참조
+```
+
+### 2.6 결과 회수와 병합
+
+Codex가 worktree에서 작업을 마치면 팀장이 병합한다.
+
+```bash
+PBC="C:/Users/kjm12/OneDrive/바탕 화면/Project/PBC EMS"
+cd "$PBC"
+
+# 1. 변경 내용 확인 — 보고를 액면가로 믿지 않는다
+git diff main..wt/T-001 --stat
+git diff main..wt/T-001
+
+# 2. 소유권 위반 확인 (지시서 담당 파일 목록 밖이 바뀌었는지)
+git diff main..wt/T-001 --name-only
+
+# 3. 병합
+git merge wt/T-001
+
+# 4. 전체 검증 (통합 테스트 포함 — 여기서 1회만)
+npm run typecheck && npm run lint && npm run test:run
+
+# 5. worktree 정리
+.\scripts\worktree-setup.ps1 -Name T-001 -Remove
+git branch -d wt/T-001
+```
+
+Codex가 worktree에서 커밋하지 않았다면 변경이 커밋되지 않은 상태로 남는다. 지시서에 **"작업 완료 후 커밋한다"**를 명시하거나, 팀장이 worktree에서 직접 커밋한다.
+
+### 2.7 이어하기
+
+후속 지시는 새 세션을 띄우지 말고 기존 스레드를 이어간다. **같은 worktree를 지정**해야 한다.
+
+```bash
+codex exec resume --last \
+  -C "C:/Users/kjm12/pbc-ems-worktrees/T-001" \
   -s workspace-write -c model="gpt-6.1-sol" -c model_reasoning_effort="high" \
   "추가 지시: <내용>"
 ```
@@ -140,26 +240,55 @@ codex exec resume --last -C "$PBC" --skip-git-repo-check \
 
 ---
 
-## 3. 파일 소유권 (충돌 방지의 핵심)
+## 3. 파일 소유권 (병합 비용 최소화)
 
-git 격리가 없으므로 **쓰기 권한은 작업 지시서로 배타 할당된다.**
+worktree가 파일 충돌을 막아주므로 소유권은 **안전 장치가 아니라 효율 장치**다. 역할이 바뀌었다.
+
+- **이전(공유 폴더)**: 소유권 위반 = 즉시 데이터 손실
+- **현재(worktree)**: 소유권 위반 = 병합 충돌 + 수동 해소 비용
+
+따라서 규칙은 유지하되, 위반의 긴급도는 낮다. 목적은 **병합이 자동으로 끝나게 만드는 것**이다.
 
 ### 3.1 규칙
 
 1. 모든 작업 지시서는 `담당 파일` 절에 **쓰기 허용 경로를 전부 명시**한다. 목록에 없는 파일은 읽기만 가능하다.
-2. 두 개의 동시 실행 작업이 **같은 경로를 쓰기로 가질 수 없다.** Claude Code가 배치 전에 확인한다.
-3. Codex가 목록 밖 파일을 수정해야 한다고 판단하면 **수정하지 말고 보고**한다. 범위 확대는 팀장 승인 사항이다.
+2. 동시 실행 작업끼리 **같은 경로를 쓰기로 갖지 않도록** 배치한다. 겹치면 병합 충돌이 생기지만 복구 가능하다 — 금지가 아니라 회피 대상이다.
+3. Codex가 목록 밖 파일을 수정해야 한다고 판단하면 **수정하지 말고 보고**한다. 범위 확대는 팀장 승인 사항이다. (worktree 안이라 수정해도 사고는 아니지만, 팀장이 예상하지 못한 변경은 검토에서 누락된다.)
 4. 공유 파일(`package.json`, `tsconfig.json`, `next.config.ts`, 마이그레이션 디렉터리, 공통 타입)은 **Claude Code 전용**이다. Codex가 의존성 추가나 설정 변경이 필요하면 요청만 한다.
+
+   > `package.json`은 특히 엄격하다. `node_modules`가 junction으로 공유되므로, worktree에서
+   > `npm install`을 실행하면 **원본 `node_modules`가 변경되어 다른 모든 worktree에 즉시 영향**을 준다.
+   > 지시서의 `범위 밖`에 항상 "의존성 설치·변경 금지"를 넣는다.
+
 5. `app/**`, `components/**`는 원칙적으로 Claude Code 소유다. Codex에 넘기려면 지시서에 **명시적으로 위임한다고 적는다.**
 
 경로별 기본 소유자는 [OWNERSHIP.md](./OWNERSHIP.md)에 정리되어 있다.
 
-### 3.2 충돌 발생 시
+### 3.2 병합 충돌 발생 시
 
-1. 즉시 해당 Codex 세션을 중단한다.
-2. 어느 쪽 변경이 정답인지 Claude Code가 판정한다.
-3. 지시서의 담당 파일 목록을 교정하고 재실행한다.
-4. 반복되는 충돌 지점은 OWNERSHIP.md에 기록한다.
+worktree 방식에서는 충돌이 **병합 시점에 git이 알려준다.** 작업 중에는 서로를 깨뜨리지 않는다.
+
+```bash
+git merge wt/T-001
+# CONFLICT (content): Merge conflict in lib/quotes/calculation.ts
+```
+
+1. 양쪽 의도를 확인한다: `git log main..wt/T-001`, `git log wt/T-001..main`
+2. 팀장이 해소한다. 판단이 어려우면 `analyst`에 양쪽 diff를 주고 검토를 요청한다.
+3. 반복되는 충돌 지점은 OWNERSHIP.md의 충돌 이력에 기록해 다음 배치에서 회피한다.
+4. 병합을 포기하려면 `git merge --abort`. worktree는 그대로 남아 재작업할 수 있다.
+
+### 3.3 worktree로도 막지 못하는 것
+
+파일 격리와 무관하게 **전역 상태를 건드리는 작업**은 여전히 위험하다.
+
+| 작업 | 영향 | 규칙 |
+| --- | --- | --- |
+| `npm install` / 의존성 변경 | junction으로 모든 worktree에 전파 | 팀장 전용 |
+| `npm run test:integration` | 로컬 DB 리셋 — 동시 실행 시 상호 파괴 | §2.5 |
+| `supabase db reset` / 마이그레이션 적용 | 로컬 DB 스키마 변경 | 팀장 전용 |
+| `.local/**` 쓰기 | junction으로 공유 | 읽기만 |
+| `npm run dev` | 포트 3000 점유 | 포트를 분리하거나 팀장만 실행 |
 
 ---
 
@@ -208,24 +337,34 @@ Codex는 역할 정의에 따라 **한국어로 간결하게** 아래를 보고�
 
 ## 5. 검증 게이트
 
-### 5.1 Codex가 실행 (작업 완료 전)
+### 5.1 Codex가 실행 (worktree 안, 작업 완료 전)
 
-| 명령 | 적용 |
-| --- | --- |
-| `npm run typecheck` | 모든 TS 변경 |
-| `npm run lint` | 모든 코드 변경 |
-| `npm run test:run` | 로직·계산·API 변경 |
-| `npm run test:integration` | DB·Supabase 관련 변경 |
+| 명령 | 적용 | worktree 병렬 |
+| --- | --- | --- |
+| `npm run typecheck` | 모든 TS 변경 | ✅ 안전 |
+| `npm run lint` | 모든 코드 변경 | ✅ 안전 |
+| `npx vitest run --no-file-parallelism --exclude "tests/integration/**"` | 로직·계산 변경 | ✅ 안전 |
+| `npm run test:run` | — | ⚠️ 통합 테스트 포함. **쓰지 않는다** |
+| `npm run test:integration` | — | ❌ **금지** — DB 리셋 |
 
-`vitest`는 `--no-file-parallelism`으로 설정되어 있다. **여러 Codex 세션이 테스트를 동시에 돌리면 간섭한다.** 테스트 실행이 필요한 작업은 순차 배치하거나, 지시서에 "테스트 실행은 보고만 하고 팀장이 일괄 실행"이라고 적는다.
+Codex가 worktree에서 실행할 단위 테스트 명령은 위의 `--exclude` 형태다. 정상 결과는 **12 passed / 192 tests**이고, `1 skipped`가 보이면 `.local` junction 문제다(§2.2).
 
-### 5.2 Claude Code가 실행 (통합 시)
+통합 테스트는 지시서에 **"작성만 하고 실행하지 않는다"**고 명시한다. 이유는 §2.5.
+
+### 5.2 Claude Code가 실행 (병합 후, main에서)
 
 1. 모든 Codex 결과 보고 수거·교차 확인
-2. 변경 파일 직접 읽고 검토 — 보고를 액면가로 믿지 않는다
-3. 소유권 위반 여부 확인 (목록 밖 파일이 바뀌었는지)
-4. 전체 `typecheck` + `lint` + `test:run` 1회 실행
-5. UI 영향이 있으면 `npm run dev`로 실제 화면 확인
+2. `git diff main..wt/<ID>`로 변경 파일 직접 읽고 검토 — 보고를 액면가로 믿지 않는다
+3. 소유권 위반 여부 확인 (`--name-only`로 목록 밖 파일이 바뀌었는지)
+4. 병합: `git merge wt/<ID>`
+5. **전체 검증 1회** — 통합 테스트는 여기서만 실행한다
+
+   ```bash
+   npm run typecheck && npm run lint && npm run test:run
+   ```
+
+6. UI 영향이 있으면 `npm run dev`로 실제 화면 확인
+7. worktree 정리: `.\scripts\worktree-setup.ps1 -Name <ID> -Remove`
 
 ---
 
@@ -275,16 +414,34 @@ Codex는 역할 정의에 따라 **한국어로 간결하게** 아래를 보고�
 작업 배치 전:
 
 - [ ] 작업 ID 발급, 지시서 작성 완료
-- [ ] 담당 파일 목록이 다른 동시 작업과 겹치지 않음
 - [ ] 역할 선택이 §7 기준에 맞음
 - [ ] 완료 조건·검증 명령·범위 밖이 지시서에 있음
-- [ ] 동시 쓰기 세션 3개 이하
-- [ ] 테스트 실행이 겹치지 않음
+- [ ] 쓰기 역할이면 **worktree 준비 완료** (`worktree-setup.ps1 -Name <ID>`)
+- [ ] worktree 생성 시 검증이 **12 passed**로 통과 (skip 없음)
+- [ ] 담당 파일 목록이 다른 동시 작업과 겹치지 않음 (병합 비용 회피)
+- [ ] 동시 쓰기 세션 5개 이하
+- [ ] 지시서 `범위 밖`에 **의존성 설치 금지**와 **통합 테스트 실행 금지** 포함
 
-통합 전:
+병합 전:
 
 - [ ] 모든 결과 보고 수거
-- [ ] 변경 파일 직접 검토
+- [ ] `git diff main..wt/<ID>` 직접 검토
 - [ ] 소유권 위반 없음
-- [ ] 전체 검증 1회 통과
+- [ ] worktree 변경이 커밋됨 (안 되어 있으면 커밋)
+
+병합 후:
+
+- [ ] `git merge` 충돌 없이 완료 (또는 해소)
+- [ ] main에서 전체 검증 1회 통과 (통합 테스트 포함)
+- [ ] UI 영향 시 실제 화면 확인
+- [ ] worktree·브랜치 정리
 - [ ] 보류·미실행 항목을 사용자에게 보고
+
+---
+
+## 9. 변경 이력
+
+| 날짜 | 변경 |
+| --- | --- |
+| 2026-10-20 | 초판. git 저장소가 아니어서 공유 폴더 + 파일 소유권 방식 |
+| 2026-10-20 | `git init` 및 origin 연결(`pbcjimee-jimee/pbc-ems`) 후 worktree 격리 방식으로 개정. §2 전면 교체, §3 소유권 역할 재정의, §5 검증 분리, `scripts/worktree-setup.ps1` 추가 |

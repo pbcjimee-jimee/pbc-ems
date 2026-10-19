@@ -1,9 +1,11 @@
 # 경로별 소유권 맵
 
-git 격리가 없는 공유 폴더에서 동시 쓰기 충돌을 막기 위한 기본 소유자 표다.
+병합 충돌을 줄이고 검토 범위를 명확히 하기 위한 기본 소유자 표다.
+
+쓰기 작업은 각자의 worktree에서 실행되므로 **동시 수정이 서로를 깨뜨리지는 않는다.** 이 표의 목적은 사고 방지가 아니라 **병합이 자동으로 끝나게 만드는 것**이다. 단, §9의 전역 자원은 worktree로도 격리되지 않으므로 여전히 엄격하다.
 
 - 규약: [ORCHESTRATION.md](./ORCHESTRATION.md) §3
-- 기준일: 2026-10-20
+- 기준일: 2026-10-20 (worktree 전환 반영)
 
 범례:
 
@@ -155,14 +157,25 @@ lib/products/**
 
 ### 4.1 실행 간섭 경고
 
-`vitest.config.ts`가 `--no-file-parallelism`으로 설정되어 있고, 통합 테스트는 실제 DB를 사용한다.
+**단위 테스트는 worktree에서 자유롭게 병렬 실행 가능하다.** DB를 쓰지 않으므로 서로 간섭하지 않는다.
 
-**여러 Codex 세션이 테스트를 동시에 실행하면 DB 상태가 간섭한다.** 다음 중 하나를 택한다.
+```bash
+npx vitest run --no-file-parallelism --exclude "tests/integration/**"
+# 정상: Test Files 12 passed (12) / Tests 192 passed
+```
 
-1. 테스트 실행이 필요한 작업은 **순차 배치**
-2. 지시서에 "테스트는 작성만 하고 실행하지 않는다"고 적고 **팀장이 일괄 실행**
+**통합 테스트는 worktree로 격리되지 않는다.** `tests/helpers/database.ts`의 `resetFixtures()`가 DB 전체를 리셋하고, 모든 worktree의 `.env.local`이 같은 로컬 Postgres(`127.0.0.1`)를 가리킨다. 두 세션이 동시에 돌리면 서로의 픽스처를 지우고 양쪽 모두 실패한다.
 
-통합 테스트(`tests/integration/**`, `npm run test:integration`)는 **항상 2번 방식**을 쓴다.
+따라서 통합 테스트(`tests/integration/**`, `npm run test:integration`, `npm run test:run`)는 **항상**:
+
+1. 지시서에 "작성만 하고 실행하지 않는다"고 적는다
+2. 팀장이 병합 후 main에서 1회 일괄 실행한다
+
+### 4.2 조용히 스킵되는 회귀 테스트
+
+`tests/operating-quote-parity.test.ts`는 `.local/operating-cases.json`이 없으면 `describe.skipIf`로 **조용히 스킵**된다. worktree에 `.local` junction이 없으면 `11 passed | 1 skipped`가 되는데, 초록불이라 통과처럼 보인다.
+
+이 테스트는 과거 실제 견적과의 계산 일치를 검증하는 **회귀 기준선**이다. 스킵되면 견적 엔진 회귀를 놓친다. `scripts/worktree-setup.ps1`이 junction을 연결하고 skip을 감지해 경고한다.
 
 ---
 
@@ -201,32 +214,47 @@ lib/products/**
 
 ## 7. 병렬 배치 예시
 
-### 안전 — 겹치지 않는 3개
+### 권장 — 경로가 갈려 병합이 자동으로 끝나는 배치
 
 ```
-세션 A (implementer) : lib/quotes/**        + tests/quotes/calculator.test.ts
-세션 B (implementer) : lib/schedule/**      + tests/schedule.test.ts
-세션 C (analyst, RO) : 읽기만 — 인보이스 설계 분석
-동시 진행 (팀장)      : components/clients/**, app/(ems)/clients/page.tsx
+세션 A (implementer, wt/T-001) : lib/quotes/**    + tests/quotes/calculator.test.ts
+세션 B (implementer, wt/T-002) : lib/schedule/**  + tests/schedule.test.ts
+세션 C (analyst, main, RO)     : 읽기만 — 인보이스 설계 분석
+동시 진행 (팀장, main)          : components/clients/**, app/(ems)/clients/page.tsx
 ```
 
-세션 A·B는 경로가 분리되고, C는 read-only, 팀장은 UI 레이어다. 충돌 없음.
+A·B는 경로가 분리되어 `git merge`가 충돌 없이 끝난다. C는 read-only, 팀장은 main에서 UI 작업. worktree가 파일을 격리하므로 팀장 작업과도 섞이지 않는다.
 
-### 위험 — 하지 말 것
-
-```
-세션 A : lib/jobs/**      + tests/integration/jobs-invoices.test.ts
-세션 B : lib/invoices/**  + tests/integration/jobs-invoices.test.ts   ← 같은 테스트 파일
-```
+### 허용되지만 비용이 드는 배치
 
 ```
-세션 A : lib/quotes/calculation.ts
-세션 B : lib/calculator.ts  + lib/quotes/calculation.ts               ← 같은 파일
+세션 A (wt/T-001) : lib/quotes/calculation.ts
+세션 B (wt/T-002) : lib/calculator.ts + lib/quotes/calculation.ts   ← 같은 파일
+```
+
+worktree 덕분에 **작업 중에는 서로를 깨뜨리지 않는다.** 하지만 병합 시점에 `calculation.ts`에서 충돌이 나고 팀장이 수동 해소해야 한다. 가능하면 순차 배치한다.
+
+```
+세션 A (wt/T-001) : lib/jobs/**     + tests/integration/jobs-invoices.test.ts
+세션 B (wt/T-002) : lib/invoices/** + tests/integration/jobs-invoices.test.ts
+```
+
+같은 테스트 파일을 쓰므로 병합 충돌이 예상된다. 단 **둘 다 테스트를 실행하지 않는 한** 작업 자체는 안전하다.
+
+### 금지 — worktree로 격리되지 않는 것
+
+```
+세션 A : npm run test:integration    ← DB 리셋
+세션 B : npm run test:integration    ← 서로의 픽스처를 지운다
 ```
 
 ```
-세션 A : npm run test:integration 실행
-세션 B : npm run test:integration 실행                                 ← DB 간섭
+세션 A : npm install <pkg>           ← junction 으로 원본 node_modules 변경
+세션 B : (아무 작업)                   ← 의존성이 발밑에서 바뀐다
+```
+
+```
+세션 A : supabase db reset           ← 로컬 DB 스키마 변경, 전체 영향
 ```
 
 ---
@@ -234,7 +262,7 @@ lib/products/**
 ## 8. 갱신 규칙
 
 - 새 도메인이나 공유 모듈이 생기면 **배치 전에** 이 표에 추가한다.
-- 충돌이 실제로 발생한 경로는 아래에 기록해 재발을 막는다.
+- 병합 충돌이 실제로 발생한 경로는 아래에 기록해 다음 배치에서 회피한다.
 - 이 문서는 팀장 전용이다. Codex가 수정하지 않는다.
 
 ### 충돌 이력
@@ -242,3 +270,19 @@ lib/products/**
 | 날짜 | 경로 | 원인 | 조치 |
 | --- | --- | --- | --- |
 | — | — | — | — |
+
+---
+
+## 9. 전역 자원 — worktree로 격리되지 않음
+
+파일 소유권과 무관하게, 아래는 **모든 worktree에 즉시 영향**을 준다. 팀장 전용이다.
+
+| 자원 | 공유 방식 | 위험 | 규칙 |
+| --- | --- | --- | --- |
+| `node_modules` | junction | `npm install`이 전체에 전파 | Codex 지시서 `범위 밖`에 항상 명시 |
+| 로컬 Postgres (`127.0.0.1`) | `.env.local` 동일 | 통합 테스트가 DB 리셋 | §4.1 |
+| `.local/**` | junction | 쓰면 다른 세션의 테스트 데이터 변경 | 읽기만 |
+| 포트 3000 | OS | `npm run dev` 중복 실행 시 충돌 | 팀장만 실행, 또는 포트 분리 |
+| Supabase 로컬 스택 | 단일 인스턴스 | `db reset`이 전체 파괴 | 팀장 전용 |
+
+`.next/`는 worktree별로 독립 생성되므로 안전하다.
