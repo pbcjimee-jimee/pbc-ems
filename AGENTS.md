@@ -8,20 +8,32 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 <!-- END:nextjs-agent-rules -->
 
-# 오케스트레이션
+# PBC EMS
 
-Claude Code(팀장)와 Codex 실행 세션이 같은 폴더에서 병렬 작업한다.
-작업을 배치하거나 수행하기 전에 아래를 읽는다.
+공통 지침은 전역 `~/.claude/CLAUDE.md`. 아래는 이 프로젝트 고유 사실만.
 
-- `docs/orchestration/ORCHESTRATION.md` — 역할·실행 명령·병렬 제약·검증 게이트
-- `docs/orchestration/OWNERSHIP.md` — 경로별 쓰기 소유권 (충돌 방지)
-- `docs/orchestration/TASK-TEMPLATE.md` — 작업 지시서 템플릿
+Next.js 16.3.8 / React 19 / TS strict / Supabase. 제품 정의는 `PRODUCT.md`, 디자인 토큰은 `DESIGN.md`, 스키마는 `supabase/ems-schema-contract.md`.
 
-핵심 제약:
+## 검증
 
-- 이 프로젝트는 git 저장소가 아니다. `--worktree`를 쓰지 않고 같은 폴더를 공유하므로,
-  **파일 소유권 규칙이 유일한 충돌 방어선이다.**
-- 작업 지시서의 `담당 파일` 목록에 없는 파일은 읽기만 가능하다. 범위 확대가 필요하면
-  수정하지 말고 보고한다.
-- UI/UX(`app/**`, `components/**`)와 공유 설정·마이그레이션은 팀장 전용이다.
-- `vitest`는 `--no-file-parallelism`이다. 여러 세션이 테스트를 동시 실행하면 간섭한다.
+```bash
+npm run typecheck && npm run lint
+npx vitest run --no-file-parallelism --exclude "tests/integration/**"
+```
+
+정상은 **12 passed / 192 tests**. `1 skipped`면 멈추고 보고한다 — `.local/operating-cases.json` 부재로 견적 회귀 기준선이 검증되지 않은 상태인데 초록불로 보인다.
+
+## 금지 (전역 자원)
+
+- **`npm install`·의존성 변경** — `node_modules`가 worktree 간 junction 공유라 전체 전파.
+- **통합 테스트 실행**(`test:integration`, `test:run`) — `resetFixtures()`가 공유 로컬 DB를 리셋해 병렬 세션을 깨뜨린다. `test` 역할이 팀장 승인을 받은 경우만 예외.
+- `supabase/migrations/**` 작성, `supabase db reset`, 설정 파일 수정 — 팀장 전용.
+- 담당 범위 밖 수정 — 필요하면 수정하지 말고 보고.
+
+## 오케스트레이션
+
+팀장(Fable 5.1)이 분석·계획·분배·검토·통합. 구현은 `ui-ux`·`test`(Opus 5.5, 메인 저장소)와 Codex 4역할(worktree)에 위임.
+
+`ui-ux`·`test`·팀장은 **메인 저장소를 공유해 git 격리가 없다.** 파일 범위가 겹치면 순차 실행한다.
+
+상세: `docs/orchestration/ORCHESTRATION.md`(역할·실행·병렬), `OWNERSHIP.md`(경로별 소유), `TASK-TEMPLATE.md`(Codex 지시서).

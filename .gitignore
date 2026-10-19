@@ -10,4 +10,5 @@ supabase/.temp/
 supabase/.branches/
 *.log
 .local/
+.claude/settings.local.json
 .gstack/
