@@ -1,1 +1,2 @@
-export default function LoadingClients() { return <p role="status" className="alert">Loading customer records…</p>; }
+import { LoadingState } from "@/components/ui/route-states";
+export default function LoadingClients() { return <LoadingState label="Loading client records…" />; }

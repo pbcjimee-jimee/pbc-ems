@@ -14,9 +14,9 @@ import type { JobDetail } from '@/lib/jobs/service';
 import type { RequestDetail } from '@/lib/requests/service';
 import { jobStatusLabels } from '@/lib/jobs/schemas';
 import { money } from '@/lib/domain/format';
-export function JobForm({job,request,commandKey,clients=[],properties=[]}:{job?:JobDetail;request?:Pick<RequestDetail,'id'|'clientId'|'propertyId'|'clientName'|'address'|'title'|'description'>;commandKey:string;clients?:{id:string;displayName:string}[];properties?:Property[]}){
+export function JobForm({job,request,commandKey,clients=[],properties=[],defaultClientId}:{defaultClientId?:string;job?:JobDetail;request?:Pick<RequestDetail,'id'|'clientId'|'propertyId'|'clientName'|'address'|'title'|'description'>;commandKey:string;clients?:{id:string;displayName:string}[];properties?:Property[]}){
   const [state,action,pending]=useActionState(saveJobAction,{} as FormState);
-  const [clientId,setClientId]=useState(job?.clientId??request?.clientId??'');const [propertyId,setPropertyId]=useState(job?.propertyId??request?.propertyId??'');
+  const [clientId,setClientId]=useState(job?.clientId??request?.clientId??defaultClientId??'');const [propertyId,setPropertyId]=useState(job?.propertyId??request?.propertyId??'');
   const [lines,setLines]=useState<PublicLineDraft[]>([{id:'initial',kind:'line_item',name:'',description:'',quantity:'1',unitPrice:'0',taxable:true,clientVisible:true,selected:true}]);
   const errors=state.result&&!state.result.ok?state.result.error.fields:undefined;const value=(key:string,fallback?:string|null)=>state.values?.[key]??fallback??'';
   let total='Check contract line amounts';try{total=money(calculateCommercialTotals(lines).total)+' AUD Inc GST';}catch{/* Invalid partial input is validated on save. */}

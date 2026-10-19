@@ -1,11 +1,24 @@
-import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { requireMembership } from '@/lib/auth/permissions';
 import { listInvoices } from '@/lib/invoices/service';
 import { InvoiceList } from '@/components/invoices/invoice-list';
-import { Button } from '@/components/ui/button';
-export default async function InvoicesPage({searchParams}:{searchParams:Promise<Record<string,string|string[]|undefined>>}){
-  const actor=await requireMembership();if(actor.role!=='admin')redirect('/jobs');const search=await searchParams;const data=await listInvoices(search);const pageLink=(page:number)=>'/invoices?'+new URLSearchParams({...data.filter,page:String(page)});
-  return <><div className="page-header"><div><h1>Invoices</h1><p className="page-description">Issue confirmed job invoices and track actual received payments.</p></div><Link href="/invoices/new" className="button">New invoice</Link></div><form method="get" className="toolbar"><div className="field"><label htmlFor="invoices-search">Search invoices</label><input type="search" name="search" id="invoices-search" maxLength={200} defaultValue={data.filter.search}/></div><div className="field"><label htmlFor="invoices-status">Status / balance</label><select id="invoices-status" name="status" defaultValue={data.filter.status}>{['all','draft','issued','outstanding','unpaid','partial','paid','overdue','void'].map(s=><option key={s} value={s}>{s==='all'?'All invoices':s.charAt(0).toUpperCase()+s.slice(1)}</option>)}</select></div><Button variant="secondary" type="submit">Apply filters</Button><Link href="/invoices">Reset</Link></form><p className="field-hint">{data.total} invoices · page {data.page}</p><InvoiceList items={data.items}/><nav aria-label="Invoice pages" className="toolbar">{data.page>1?<Link href={pageLink(data.page-1)}>Previous</Link>:null}{data.page*data.pageSize<data.total?<Link href={pageLink(data.page+1)}>Next</Link>:null}</nav></>;
-}
+import { PageHeader } from '@/components/ui/page-header';
+import { ButtonLink } from '@/components/ui/button';
+import { Tabs } from '@/components/ui/tabs';
+import { FilterBar } from '@/components/ui/filter-bar';
+import { Pagination } from '@/components/ui/pagination';
 
+const statusTabs:[string,string][]=[['all','All'],['draft','Draft'],['outstanding','Awaiting payment'],['overdue','Past due'],['partial','Partially paid'],['paid','Paid'],['void','Void']];
+
+export default async function InvoicesPage({searchParams}:{searchParams:Promise<Record<string,string|string[]|undefined>>}){
+  const actor=await requireMembership();if(actor.role!=='admin')redirect('/jobs');const search=await searchParams;const data=await listInvoices(search);
+  const link=(change:Record<string,string>)=>'/invoices?'+new URLSearchParams({...data.filter,page:'1',...change});
+  const counts=(data as {counts?:Record<string,number>}).counts;
+  return <>
+    <PageHeader title="Invoices" description="Issue confirmed job invoices and track payments actually received." actions={<ButtonLink href="/invoices/new" icon="plus">New invoice</ButtonLink>}/>
+    <Tabs label="Invoice status" items={statusTabs.map(([value,label])=>({label,href:link({status:value}),current:data.filter.status===value,count:counts?.[value]}))}/>
+    <FilterBar resetHref="/invoices" search={{id:'invoices-search',label:'Search invoices',defaultValue:data.filter.search,placeholder:'Number, title or client'}}><input type="hidden" name="status" value={data.filter.status}/></FilterBar>
+    <InvoiceList items={data.items} filtered={!!data.filter.search||data.filter.status!=='all'}/>
+    <Pagination label="Invoice pages" page={data.page} pageSize={data.pageSize} total={data.total} href={page=>link({page:String(page)})}/>
+  </>;
+}

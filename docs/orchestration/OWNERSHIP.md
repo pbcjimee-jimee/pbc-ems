@@ -51,7 +51,7 @@ git 격리가 없는 공유 폴더에서 동시 쓰기 충돌을 막기 위한 �
 | `app/**/*.module.css` | 팀장 전용 | |
 | `app/login/**`, `app/setup/**` | 팀장 전용 | 인증 화면 |
 | `components/shell/**` | 팀장 전용 | 앱 셸·아이콘·내비게이션 |
-| `components/ui/**` | 팀장 전용 | 공통 프리미티브. 여기가 바뀌면 전체가 흔들린다 |
+| `components/ui/**` | 팀장 전용 | 공통 프리미티브(PageHeader, Card, Tabs, FilterBar, DataTable, Pagination, StatusBadge, MoreMenu, WorkflowTrail, DetailList, Notice, Metric, Avatar, form, route-states). 여기가 바뀌면 전체가 흔들린다 |
 | `components/documents/**` | 팀장 전용 | 고객 문서 출력물 |
 | `components/<도메인>/**` | 팀장 기본 | 도메인 단위로 위임 가능 |
 
@@ -93,6 +93,7 @@ Codex가 서비스 레이어 시그니처를 바꾸면 **actions.ts 수정은 �
 | **documents** | `lib/documents/**` | `tests/documents.test.ts` |
 | **home** | `lib/home/**` | — |
 | **settings** | `lib/settings/**` | `tests/integration/workspace.test.ts` |
+| **home** (집계 통합) | `lib/home/**` | `tests/integration/home.test.ts` |
 
 > `clients`와 `requests`는 테스트 파일을 공유한다. 두 묶음을 **동시에 쓰기 배정하지 않는다.**
 > `jobs`와 `invoices`, `expenses`와 `timesheets`도 같다.
@@ -112,6 +113,7 @@ Codex가 서비스 레이어 시그니처를 바꾸면 **actions.ts 수정은 �
 | `lib/db/**` | 팀장 | 트랜잭션·SQL 오류 처리 |
 | `lib/auth/**` | 팀장 | 인증·권한. `quick_edit` 금지 영역 |
 | `lib/workflows/commands.ts` | 팀장 | 도메인 간 워크플로 |
+| `lib/workflows/queries.ts` | 팀장 기본 | 활동 타임라인 조회. T-010에서 명시 위임. 테스트 `tests/integration/activity.test.ts` |
 
 ### 3.2 견적 계산 엔진 — implementer 전용
 
@@ -241,4 +243,5 @@ lib/products/**
 
 | 날짜 | 경로 | 원인 | 조치 |
 | --- | --- | --- | --- |
-| — | — | — | — |
+| 2026-10-20 | `tests/integration/*` | 새 테스트가 `adminQuery`(raw postgres)로 jobs를 직접 UPDATE → supervisor 가드 트리거에 막힘 | 지시서에 "보호 테이블은 서비스 함수로 변경" 명시 |
+| 2026-10-20 | `eslint .` | browse가 워크트리에 만든 `.gstack/` 접근 EPERM | `eslint.config.mjs`·`.gitignore`에 `.gstack/` 추가 |

@@ -10,7 +10,7 @@ import { runCommand, recordActivity, requireVersion, WorkflowError } from '@/lib
 import { calculateQuoteSnapshot, QUOTE_ENGINE_VERSION } from './calculation';
 import { calculateCommercialTotals } from './commercial-totals';
 import { quoteSchema, quoteStatusSchema, commandMetaSchema, invalidResult, productSchema, pricingSchema, type QuoteInput, type QuoteStatus } from './schemas';
-import type { CatalogProduct, QuoteEditorData, QuoteRevision, PricingData, QuoteTemplate } from './service-types';
+import type { CatalogProduct, QuoteEditorData, QuoteRevision, PricingData, QuoteTemplate, QuoteTabKey, QuotePipeline } from './service-types';
 import type { QuoteCalculationInput, MaterialItem } from './types';
 import { customerSnapshot, commercialSnapshot } from './snapshots';
 
@@ -155,14 +155,46 @@ export async function duplicateQuote(id:unknown,meta:unknown):Promise<Result<Ver
 }
 export async function listQuotes(input:unknown={}) {
   const parsed=z.object({ search:z.string().max(200).default(''),status:z.union([quoteStatusSchema,z.literal('all')]).default('all'),page:z.coerce.number().int().min(1).max(10000).default(1) }).safeParse(input);
-  const filter=parsed.success?parsed.data:{search:'',status:'all',page:1};
+  const filter=parsed.success?parsed.data:{search:'',status:'all' as const,page:1};
   return withEmsTransaction(async tx=>{ await requireAdmin(tx);
-    const where="q.organization_id=$1 and ($2='' or q.title ilike '%'||$2||'%' or q.number ilike '%'||$2||'%' or c.display_name ilike '%'||$2||'%') and ($3='all' or q.status=$3)";
-    const values=[tx.actor.organizationId,filter.search,filter.status];
-    const [count]=await tx.query<{total:string}>(`select count(*)::text total from ems.quotes q join ems.clients c on c.id=q.client_id and c.organization_id=q.organization_id where ${where}`,values);
-    const items=await tx.query<{id:string;number:string;title:string;status:QuoteStatus;clientName:string;total:string;validUntil:string|null}>(`select q.id,q.number,q.title,q.status,c.display_name as "clientName",coalesce(r.total,0)::text total,q.valid_until::text as "validUntil" from ems.quotes q join ems.clients c on c.id=q.client_id and c.organization_id=q.organization_id left join ems.quote_revisions r on r.id=q.current_revision_id and r.organization_id=q.organization_id where ${where} order by q.updated_at desc,q.id limit 25 offset $4`,[...values,(filter.page-1)*25]);
-    return {items,total:Number(count.total),filter};
+    const where="q.organization_id=$1 and ($2='' or q.title ilike '%'||$2||'%' or q.number ilike '%'||$2||'%' or c.display_name ilike '%'||$2||'%')";
+    const values=[tx.actor.organizationId,filter.search];
+    const [count]=await tx.query<Record<QuoteTabKey,string>>(`select count(*)::text as "all",
+      (count(*) filter (where q.status='draft'))::text as draft,
+      (count(*) filter (where q.status='issued'))::text as issued,
+      (count(*) filter (where q.status='changes_requested'))::text as changes_requested,
+      (count(*) filter (where q.status='approved'))::text as approved,
+      (count(*) filter (where q.status='declined'))::text as declined,
+      (count(*) filter (where q.status='archived'))::text as archived
+      from ems.quotes q join ems.clients c on c.id=q.client_id and c.organization_id=q.organization_id where ${where}`,values);
+    const counts:Record<QuoteTabKey,number>={ all:Number(count.all),draft:Number(count.draft),issued:Number(count.issued),changes_requested:Number(count.changes_requested),approved:Number(count.approved),declined:Number(count.declined),archived:Number(count.archived) };
+    const items=await tx.query<{id:string;number:string;title:string;status:QuoteStatus;clientName:string;total:string;validUntil:string|null}>(`select q.id,q.number,q.title,q.status,c.display_name as "clientName",coalesce(r.total,0)::text total,q.valid_until::text as "validUntil" from ems.quotes q join ems.clients c on c.id=q.client_id and c.organization_id=q.organization_id left join ems.quote_revisions r on r.id=q.current_revision_id and r.organization_id=q.organization_id where ${where} and ($3='all' or q.status=$3) order by q.updated_at desc,q.id limit 25 offset $4`,[...values,filter.status,(filter.page-1)*25]);
+    return {items,total:counts[filter.status],filter,counts};
   });
+}
+export async function readQuotePipeline(tx:EmsTx):Promise<QuotePipeline> {
+  if (tx.actor.role!=='admin') throw new WorkflowError('FORBIDDEN','Administrator permission required.');
+  const [row]=await tx.query<{ draft:string; awaiting_count:string; awaiting_amount:string; changes_requested:string; approved_count:string; approved_amount:string }>(`with pipeline as (
+    select q.status,r.total as current_total,a.total as approved_total,
+      not exists(select 1 from ems.jobs j where j.quote_revision_id=q.approved_revision_id and j.organization_id=q.organization_id) as unconverted
+    from ems.quotes q
+    left join ems.quote_revisions r on r.id=q.current_revision_id and r.organization_id=q.organization_id
+    left join ems.quote_revisions a on a.id=q.approved_revision_id and a.organization_id=q.organization_id
+    where q.organization_id=$1
+  ) select
+    (count(*) filter (where status='draft'))::text as draft,
+    (count(*) filter (where status='issued'))::text as awaiting_count,
+    round(coalesce(sum(current_total) filter (where status='issued'),0),2)::text as awaiting_amount,
+    (count(*) filter (where status='changes_requested'))::text as changes_requested,
+    (count(*) filter (where status='approved' and unconverted))::text as approved_count,
+    round(coalesce(sum(approved_total) filter (where status='approved' and unconverted),0),2)::text as approved_amount
+    from pipeline`,[tx.actor.organizationId]);
+  return {
+    draft:{count:Number(row.draft)},
+    awaitingResponse:{count:Number(row.awaiting_count),amount:row.awaiting_amount},
+    changesRequested:{count:Number(row.changes_requested)},
+    approvedUnconverted:{count:Number(row.approved_count),amount:row.approved_amount},
+  };
 }
 export async function getQuoteResources() {
   return withEmsTransaction(async tx=>{ await requireAdmin(tx); return {

@@ -10,7 +10,7 @@ import {Button} from '@/components/ui/button';
 import {CommandFields,TextArea} from '@/components/clients/client-form';
 import styles from './schedule.module.css';
 type Props={visit?:Visit;commandKey:string;options:ScheduleOptions;jobId?:string;requestId?:string;date:string;initialTitle?:string;initialStart?:string;initialEnd?:string};
-function Feedback({state}:{state:VisitFormState}) {return state.result&&!state.result.ok?<div className="alert" role="alert"><p>{state.result.error.message}</p>{state.result.error.code==='VERSION_CONFLICT'?<a href="">Reload the latest visit before saving again</a>:null}{state.result.error.fields?<ul>{Object.entries(state.result.error.fields).map(([key,error])=><li key={key}>{error}</li>)}</ul>:null}</div>:null;}
+function Feedback({state}:{state:VisitFormState}) {return state.result&&!state.result.ok?<div className="alert notice-danger" role="alert"><p>{state.result.error.message}</p>{state.result.error.code==='VERSION_CONFLICT'?<a href="">Reload the latest visit before saving again</a>:null}{state.result.error.fields?<ul>{Object.entries(state.result.error.fields).map(([key,error])=><li key={key}>{error}</li>)}</ul>:null}</div>:null;}
 export function EventForm({visit,commandKey,options,jobId,requestId,date,initialTitle,initialStart,initialEnd}:Props){
   const [state,action,pending]=useActionState(saveVisitAction,{} as VisitFormState);const [allDay,setAllDay]=useState(visit?.allDay??false);const errors=state.result&&!state.result.ok?state.result.error.fields:undefined;
   const val=(name:string,fallback?:string|null)=>state.values?.[name]??fallback??'';
@@ -38,5 +38,12 @@ export function EventForm({visit,commandKey,options,jobId,requestId,date,initial
 }
 export function VisitStatusForm({visit,commandKey,admin}:{visit:Visit;commandKey:string;admin:boolean}){
   const [state,action,pending]=useActionState(changeVisitStatusAction,{} as VisitFormState);
-  return <form onReset={event => event.preventDefault()} action={action} className="panel"><CommandFields id={visit.id} version={visit.version} commandKey={commandKey}/><Feedback state={state}/><div className="toolbar"><div className="field"><label htmlFor="status-change">Visit status</label><select id="status-change" name="status" defaultValue={visit.status}>{Object.entries(visitStatuses).filter(([key])=>admin||key!=='cancelled'||visit.status==='cancelled').map(([key,label])=><option value={key} key={key}>{label}</option>)}</select></div><Button type="submit" loading={pending}>Update status</Button></div><p className="field-hint">This changes the visit’s status. Update the linked job separately when its overall work is complete.</p></form>;
+  return <form onReset={event => event.preventDefault()} action={action}><CommandFields id={visit.id} version={visit.version} commandKey={commandKey}/><Feedback state={state}/><div className="toolbar"><div className="field"><label htmlFor="status-change">Visit status</label><select id="status-change" name="status" defaultValue={visit.status}>{Object.entries(visitStatuses).filter(([key])=>admin||key!=='cancelled'||visit.status==='cancelled').map(([key,label])=><option value={key} key={key}>{label}</option>)}</select></div><Button type="submit" loading={pending}>Update status</Button></div><p className="field-hint">This changes the visit’s status. Update the linked job separately when its overall work is complete.</p></form>;
+}
+/** Large field-friendly buttons for the next visit step (Start → Complete). */
+export function VisitQuickActions({visit,commandKey}:{visit:Visit;commandKey:string}){
+  const [state,action,pending]=useActionState(changeVisitStatusAction,{} as VisitFormState);
+  const next:[string,string][]=visit.status==='scheduled'?[['in_progress','Start visit'],['completed','Mark complete']]:visit.status==='in_progress'?[['completed','Complete visit']]:[];
+  if(!next.length)return null;
+  return <form action={action}><CommandFields id={visit.id} version={visit.version} commandKey={commandKey}/><Feedback state={state}/><div className={styles.quick}>{next.map(([status,label],index)=><button key={status} type="submit" name="status" value={status} className={`button${index?' button-secondary':''}`} disabled={pending}>{pending?'Saving…':label}</button>)}</div></form>;
 }

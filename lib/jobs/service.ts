@@ -1,19 +1,27 @@
 import 'server-only';
 import Decimal from 'decimal.js';
 import { z } from 'zod';
-import { withEmsTransaction } from '@/lib/db/transaction';
+import { withEmsTransaction, type EmsTx } from '@/lib/db/transaction';
 import { clientMutation } from '@/lib/clients/service';
 import { calculateCommercialTotals } from '@/lib/quotes/commercial-totals';
 import { customerSnapshot, commercialSnapshot } from '@/lib/quotes/snapshots';
 import type { CommercialSnapshot, CustomerSnapshot } from '@/lib/documents/types';
 import type { Result,Versioned } from '@/lib/domain/types';
 import { runCommand,requireVersion,recordActivity,WorkflowError } from '@/lib/workflows/commands';
-import { jobSchema,jobListSchema,jobStatusSchema,commandMetaSchema,invalidResult } from './schemas';
+import { jobSchema,jobListSchema,jobStatusSchema,commandMetaSchema,invalidResult, type JobStatus } from './schemas';
+import { assertJobTransition } from './transitions';
+export type JobCounts=Record<'all'|'active'|JobStatus,number>&{requires_invoicing?:number};
+export type JobPipeline={
+  active:{count:number};
+  inProgress:{count:number};
+  requiresInvoicing?:{count:number;amount:string;missingAmountCount:number};
+};
 export type JobSummary=Versioned&{number:string;title:string;status:string;clientId:string;propertyId:string|null;requestId:string|null;clientName:string;address:string|null;archivedAt:string|null};
 export type JobContract={snapshot:CommercialSnapshot;customer:CustomerSnapshot;subtotal:string;tax:string;total:string};
 export type JobDetail=JobSummary&{description:string;notes:string|null;quoteId?:string|null;contract?:JobContract;visits:{id:string;title:string;status:string;allDay:boolean;start:string;end:string}[];invoices?:{id:string;number:string;status:string}[];expenses:{id:string;title:string}[];timeEntries:{id:string;status:string;startedAt:string}[];actuals:{scope:'job'|'own';expenseTotal:string;workedMinutes:string;runningTimers:number}};
 const columns='j.id,j.version,j.number,j.title,j.status,j.client_id as "clientId",j.property_id as "propertyId",j.request_id as "requestId",c.display_name as "clientName",p.address,j.archived_at::text as "archivedAt"';
 const joins='from ems.jobs j join ems.clients c on c.id=j.client_id and c.organization_id=j.organization_id left join ems.properties p on p.id=j.property_id and p.organization_id=j.organization_id';
+const requiresInvoicing="j.archived_at is null and j.status='completed' and not exists(select 1 from ems.invoices i where i.job_id=j.id and i.organization_id=j.organization_id and i.status<>'void')";
 export async function convertQuoteToJob(quoteId:unknown,meta:unknown):Promise<Result<Versioned>>{
   const parsed=z.object({quoteId:z.uuid(),meta:commandMetaSchema}).safeParse({quoteId,meta});if(!parsed.success)return invalidResult(parsed.error);const d=parsed.data;
   return clientMutation(tx=>runCommand(tx,'job.convert',d.meta,{quoteId:d.quoteId},async()=>{
@@ -35,8 +43,9 @@ export async function saveJob(input:unknown,meta:unknown):Promise<Result<Version
   const parsed=jobSchema.safeParse(input);if(!parsed.success)return invalidResult(parsed.error);const command=commandMetaSchema.safeParse(meta);if(!command.success)return invalidResult(command.error);const d=parsed.data;
   return clientMutation(tx=>runCommand(tx,'job.save',command.data,d,async()=>{
     if(d.id){
-      const [current]=await tx.query<Versioned&{client_id:string;property_id:string|null;request_id:string|null}>('select id,version,client_id,property_id,request_id from ems.jobs where id=$1 and organization_id=$2 for update',[d.id,tx.actor.organizationId]);
+      const [current]=await tx.query<Versioned&{client_id:string;property_id:string|null;request_id:string|null;status:JobStatus;archived_at:string|null}>('select id,version,client_id,property_id,request_id,status,archived_at from ems.jobs where id=$1 and organization_id=$2 for update',[d.id,tx.actor.organizationId]);
       if(!current)throw new WorkflowError('NOT_FOUND','Job not found.');requireVersion(current.version,command.data.expectedVersion);
+      if(current.status!==d.status)assertJobTransition({role:tx.actor.role,from:current.status,to:d.status,archived:current.archived_at!==null});
       if(current.client_id!==d.clientId||current.property_id!==(d.propertyId??null)||(d.requestId!==undefined&&current.request_id!==d.requestId))throw new WorkflowError('FIXED_CONTRACT','The confirmed customer, site and originating request cannot change.');
       const [saved]=await tx.query<Versioned>("update ems.jobs set title=$1,description=$2,notes=$3,status=$4,completed_at=case when $4='completed' then coalesce(completed_at,now()) else null end,version=version+1 where id=$5 and organization_id=$6 returning id,version",[d.title,d.description,d.notes,d.status,d.id,tx.actor.organizationId]);
       await recordActivity(tx,'job',saved.id,'updated',{status:d.status});return saved;
@@ -53,7 +62,9 @@ export async function saveJob(input:unknown,meta:unknown):Promise<Result<Version
 export async function changeJobStatus(id:unknown,status:unknown,meta:unknown):Promise<Result<Versioned>>{
   const parsed=z.object({id:z.uuid(),status:jobStatusSchema,meta:commandMetaSchema}).safeParse({id,status,meta});if(!parsed.success)return invalidResult(parsed.error);const d=parsed.data;
   try{return {ok:true,data:await withEmsTransaction(tx=>runCommand(tx,'job.status',d.meta,{id:d.id,status:d.status},async()=>{
-    const [job]=await tx.query<Versioned>('select id,version from ems.jobs where id=$1 and organization_id=$2 for update',[d.id,tx.actor.organizationId]);if(!job)throw new WorkflowError('NOT_FOUND','Assigned job not found.');requireVersion(job.version,d.meta.expectedVersion);
+    const [job]=await tx.query<Versioned&{status:JobStatus;archived_at:string|null}>('select id,version,status,archived_at from ems.jobs where id=$1 and organization_id=$2 for update',[d.id,tx.actor.organizationId]);if(!job)throw new WorkflowError('NOT_FOUND','Assigned job not found.');requireVersion(job.version,d.meta.expectedVersion);
+    assertJobTransition({role:tx.actor.role,from:job.status,to:d.status,archived:job.archived_at!==null});
+    if(job.status===d.status)return {id:job.id,version:job.version};
     const [saved]=await tx.query<Versioned>("update ems.jobs set status=$1,completed_at=case when $1='completed' then coalesce(completed_at,now()) else null end,version=version+1 where id=$2 and organization_id=$3 returning id,version",[d.status,d.id,tx.actor.organizationId]);await recordActivity(tx,'job',d.id,'status_changed',{status:d.status});return saved;
   }))};}catch(error){return {ok:false,error:error instanceof WorkflowError?{code:error.code,message:error.message}:{code:'SAVE_FAILED',message:'Status could not be saved. Reload and try again.'}};}
 }
@@ -68,10 +79,40 @@ export async function listJobs(input:unknown={}){
   const p=jobListSchema.safeParse(input);const filter=p.success?p.data:jobListSchema.parse({});
   return withEmsTransaction(async tx=>{
     if(tx.actor.role!=='admin'&&filter.status==='requires_invoicing')throw new WorkflowError('FORBIDDEN','Administrator permission required for invoice filters.');
-    const where="j.organization_id=$1 and ($2='' or j.title ilike '%'||$2||'%' or c.display_name ilike '%'||$2||'%' or j.number ilike '%'||$2||'%') and ($3='all' or j.status=$3 or ($3='active' and j.status not in ('completed','cancelled')) or ($3='requires_invoicing' and j.status='completed' and not exists(select 1 from ems.invoices i where i.job_id=j.id and i.organization_id=j.organization_id and i.status<>'void'))) and ($4='all' or ($4='active' and j.archived_at is null) or ($4='archived' and j.archived_at is not null))";const values=[tx.actor.organizationId,filter.search,filter.status,filter.archive];
-    const [count]=await tx.query<{total:string}>(`select count(*)::text total ${joins} where ${where}`,values);
-    const items=await tx.query<JobSummary>(`select ${columns} ${joins} where ${where} order by j.updated_at desc,j.id limit 25 offset $5`,[...values,(filter.page-1)*25]);return {items,total:Number(count.total),filter,page:filter.page,pageSize:25};
+    const admin=tx.actor.role==='admin';
+    const invoiceColumn=admin?`,(${requiresInvoicing}) as requires_invoicing`:'';
+    const invoiceCount=admin?`, 'requires_invoicing',count(*) filter (where requires_invoicing)`:'';
+    const invoiceFilter=admin?`or ($3='requires_invoicing' and requires_invoicing)`:'';
+    const [row]=await tx.query<{counts:JobCounts;items:JobSummary[]}>(`with scoped as (
+      select ${columns},j.updated_at ${invoiceColumn} ${joins}
+      where j.organization_id=$1 and ($2='' or j.title ilike '%'||$2||'%' or c.display_name ilike '%'||$2||'%' or j.number ilike '%'||$2||'%')
+        and ($4='all' or ($4='active' and j.archived_at is null) or ($4='archived' and j.archived_at is not null))
+    ), page as (
+      select * from scoped where ($3='all' or status=$3 or ($3='active' and status not in ('completed','cancelled')) ${invoiceFilter})
+      order by updated_at desc,id limit 25 offset $5
+    ) select jsonb_build_object(
+      'all',count(*),'active',count(*) filter (where status not in ('completed','cancelled')),
+      'unscheduled',count(*) filter (where status='unscheduled'),'scheduled',count(*) filter (where status='scheduled'),
+      'in_progress',count(*) filter (where status='in_progress'),'completed',count(*) filter (where status='completed'),
+      'cancelled',count(*) filter (where status='cancelled') ${invoiceCount}
+    ) as counts,coalesce((select jsonb_agg(to_jsonb(page)-'updated_at'-'requires_invoicing' order by updated_at desc,id) from page),'[]'::jsonb) as items
+    from scoped`,[tx.actor.organizationId,filter.search,filter.status,filter.archive,(filter.page-1)*25]);
+    return {items:row.items,total:row.counts[filter.status]??0,counts:row.counts,filter,page:filter.page,pageSize:25};
   });
+}
+export async function readJobPipeline(tx:EmsTx):Promise<JobPipeline>{
+  const admin=tx.actor.role==='admin';
+  const invoiceColumns=admin?`,count(*) filter (where ${requiresInvoicing})::int as "requiresInvoicing",
+    coalesce(sum(contract.total) filter (where ${requiresInvoicing}),0)::text as amount,
+    count(*) filter (where ${requiresInvoicing} and contract.job_id is null)::int as "missingAmountCount"`:'';
+  const contractJoin=admin?'left join ems.job_contracts contract on contract.job_id=j.id and contract.organization_id=j.organization_id':'';
+  const [row]=await tx.query<{active:number;inProgress:number;requiresInvoicing?:number;amount?:string;missingAmountCount?:number}>(`select
+    count(*) filter (where j.status not in ('completed','cancelled'))::int as active,
+    count(*) filter (where j.status='in_progress')::int as "inProgress" ${invoiceColumns}
+    from ems.jobs j ${contractJoin} where j.organization_id=$1 and j.archived_at is null`,[tx.actor.organizationId]);
+  const pipeline:JobPipeline={active:{count:row.active},inProgress:{count:row.inProgress}};
+  if(admin)pipeline.requiresInvoicing={count:row.requiresInvoicing!,amount:new Decimal(row.amount!).toFixed(2),missingAmountCount:row.missingAmountCount!};
+  return pipeline;
 }
 export async function readJob(id:string):Promise<JobDetail|null>{
   if(!z.uuid().safeParse(id).success)return null;

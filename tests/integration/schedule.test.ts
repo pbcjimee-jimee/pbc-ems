@@ -7,6 +7,11 @@ const meta=(expectedVersion=0)=>({expectedVersion,idempotencyKey:randomUUID()});
 const admin=<T>(work:()=>Promise<T>)=>asLocalUser(fixtures.pbcAdmin,work);
 const input=(extra:Record<string,unknown>={})=>({title:'Schedule integration',type:'visit',allDay:false,startsAt:'2026-10-15T22:00:00Z',endsAt:'2026-10-15T23:00:00Z',assigneeIds:[fixtures.pbcSupervisor],...extra});
 const must=<T>(r:{ok:true;data:T}|{ok:false;error:{message:string}}):T=>{if(!r.ok)throw Error(r.error.message);return r.data;};
+const newJob=async(status='unscheduled')=>{
+  const id=randomUUID();
+  await adminQuery('insert into ems.jobs(id,organization_id,client_id,property_id,title,status) values($1,$2,$3,$4,$5,$6)',[id,fixtures.pbcOrganizationId,fixtures.pbcClientId,fixtures.pbcPropertyId,'Visit transition test',status]);
+  return id;
+};
 describe.sequential('schedule business services',()=>{
   beforeAll(async()=>{await resetFixtures();},60_000);
   it('creates assigned visits, retries once and rejects changed retry payloads',()=>admin(async()=>{
@@ -74,4 +79,65 @@ describe.sequential('schedule business services',()=>{
     expect((await querySchedule({from:'2026-10-16',to:'2026-10-16'})).some(v=>v.id===saved.id)).toBe(false);
     expect((await querySchedule({from:'2026-10-16',to:'2026-10-16'},{showCancelled:true})).some(v=>v.id===saved.id)).toBe(true);
   }));
+  it.each(['saveVisit','changeVisitStatus'] as const)('%s cancellation returns the last active visit job to unscheduled with one audit event per change',path=>admin(async()=>{
+    const jobId=await newJob();
+    must(await saveVisit(input({jobId,status:'cancelled'}),meta()));
+    const visit=must(await saveVisit(input({jobId}),meta()));
+    const [scheduled]=await adminQuery<{version:number}>('select version from ems.jobs where id=$1',[jobId]);
+    const command=meta(visit.version);
+    const cancel=()=>path==='saveVisit'?saveVisit(input({id:visit.id,jobId,status:'cancelled'}),command):changeVisitStatus(visit.id,'cancelled',command);
+    const result=await cancel();must(result);expect(await cancel()).toEqual(result);
+    expect((await adminQuery('select status,version from ems.jobs where id=$1',[jobId]))[0]).toMatchObject({status:'unscheduled',version:scheduled.version+1});
+    expect((await unscheduledJobs()).some(job=>job.id===jobId)).toBe(true);
+    const events=await adminQuery<{data:Record<string,unknown>}>("select data from ems.activity_events where entity_type='job' and entity_id=$1 and action='status_changed' order by created_at",[jobId]);
+    expect(events.map(event=>event.data)).toEqual([{status:'scheduled',reason:'visit_rescheduled'},{status:'unscheduled',reason:'visit_rescheduled'}]);
+  }));
+  it.each(['scheduled','in_progress','completed'])('keeps a job scheduled when another %s visit remains',status=>admin(async()=>{
+    const jobId=await newJob();
+    const visit=must(await saveVisit(input({jobId}),meta()));
+    must(await saveVisit(input({jobId,status}),meta()));
+    const [before]=await adminQuery<{version:number}>('select version from ems.jobs where id=$1',[jobId]);
+    must(await changeVisitStatus(visit.id,'cancelled',meta(visit.version)));
+    expect((await adminQuery('select status,version from ems.jobs where id=$1',[jobId]))[0]).toMatchObject({status:'scheduled',version:before.version});
+    expect((await unscheduledJobs()).some(job=>job.id===jobId)).toBe(false);
+  }));
+  it.each(['saveVisit','changeVisitStatus'] as const)('%s cancellation preserves in-progress and completed job states',path=>admin(async()=>{
+    for(const status of ['in_progress','completed']){
+      const jobId=await newJob(status);
+      const visit=must(await saveVisit(input({jobId}),meta()));
+      const [before]=await adminQuery<{version:number}>('select version from ems.jobs where id=$1',[jobId]);
+      must(await(path==='saveVisit'?saveVisit(input({id:visit.id,jobId,status:'cancelled'}),meta(visit.version)):changeVisitStatus(visit.id,'cancelled',meta(visit.version))));
+      expect((await adminQuery('select status,version from ems.jobs where id=$1',[jobId]))[0]).toMatchObject({status,version:before.version});
+      expect(await adminQuery("select id from ems.activity_events where entity_type='job' and entity_id=$1 and action='status_changed'",[jobId])).toHaveLength(0);
+    }
+  }));
+  it.each(['move','unlink'])('reevaluates the previous job on visit %s',operation=>admin(async()=>{
+    const oldJobId=await newJob();const newJobId=operation==='move'?await newJob():null;
+    const visit=must(await saveVisit(input({jobId:oldJobId}),meta()));
+    const [before]=await adminQuery<{version:number}>('select version from ems.jobs where id=$1',[oldJobId]);
+    must(await saveVisit(input({id:visit.id,jobId:newJobId}),meta(visit.version)));
+    expect((await adminQuery('select status,version from ems.jobs where id=$1',[oldJobId]))[0]).toMatchObject({status:'unscheduled',version:before.version+1});
+    expect((await unscheduledJobs()).some(job=>job.id===oldJobId)).toBe(true);
+    expect((await readVisit(visit.id))?.jobId).toBe(newJobId);
+    if(newJobId){
+      expect((await adminQuery('select status from ems.jobs where id=$1',[newJobId]))[0]).toMatchObject({status:'scheduled'});
+      expect((await unscheduledJobs()).some(job=>job.id===newJobId)).toBe(false);
+    }
+  }));
+  it.each(['saveVisit','changeVisitStatus'] as const)('%s lets an admin reopen a cancelled visit and reschedule its job',path=>admin(async()=>{
+    const jobId=await newJob();const visit=must(await saveVisit(input({jobId}),meta()));
+    const cancelled=must(await changeVisitStatus(visit.id,'cancelled',meta(visit.version)));
+    expect((await unscheduledJobs()).some(job=>job.id===jobId)).toBe(true);
+    must(await(path==='saveVisit'?saveVisit(input({id:visit.id,jobId,status:'scheduled'}),meta(cancelled.version)):changeVisitStatus(visit.id,'scheduled',meta(cancelled.version))));
+    expect((await adminQuery('select status from ems.jobs where id=$1',[jobId]))[0]).toMatchObject({status:'scheduled'});
+    expect((await unscheduledJobs()).some(job=>job.id===jobId)).toBe(false);
+  }));
+  it.each([{from:'completed',to:'scheduled'},{from:'scheduled',to:'cancelled'}])('returns INVALID_TRANSITION when a supervisor changes $from → $to without leaking an exception',async({from,to})=>{
+    const visit=must(await admin(()=>saveVisit(input({status:from}),meta())));
+    await asLocalUser(fixtures.pbcSupervisor,async()=>{
+      await expect(changeVisitStatus(visit.id,to,meta(visit.version))).resolves.toMatchObject({ok:false,error:{code:'INVALID_TRANSITION'}});
+      expect(await readVisit(visit.id)).toMatchObject({status:from,version:visit.version});
+    });
+    expect(await adminQuery("select id from ems.activity_events where entity_type='visit' and entity_id=$1 and action='status_changed'",[visit.id])).toHaveLength(0);
+  });
 });

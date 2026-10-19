@@ -56,6 +56,10 @@ Codex 실행 세션 — 구현 담당
 
 ### 2.1 원칙: 같은 폴더, worktree 없음
 
+> 2026-10-20 갱신: Orca 워크트리(`C:/Users/kjm12/orca/workspaces/PBC EMS/sailfish`, git 브랜치)에서도 같은 규칙을 쓴다.
+> Codex는 `--worktree` 없이 이 폴더를 `-C`로 공유하고, Orca 터미널 탭(사이드바에 표시)에서 실행한다.
+> 결과 로그는 워크트리 밖 `../logs/<작업ID>.log`, 완료 표시는 `../logs/<작업ID>.done`.
+
 이 프로젝트는 **git 저장소가 아니다**(`.git` 없음). 따라서
 
 - `codex exec --worktree`는 사용하지 않는다. 사용 시 실패하거나 의도와 다른 격리가 발생한다.

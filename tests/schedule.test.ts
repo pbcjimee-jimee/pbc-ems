@@ -1,7 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+vi.mock('server-only',()=>({}));
 import { resolveSydneyDateTime, formatSydneyInput } from '@/lib/domain/sydney-date-time';
 import { calendarRange, addDays, visitInterval, overlaps, visitOnDate } from '@/lib/schedule/dates';
 import { visitSchema } from '@/lib/schedule/schemas';
+import { assertVisitTransition } from '@/lib/schedule/transitions';
+import type { VisitStatus } from '@/lib/schedule/types';
 describe('Sydney schedules', () => {
   it('rejects nonexistent DST times and resolves repeated times explicitly', () => {
     expect(resolveSydneyDateTime('2026-10-04','02:30')).toMatchObject({ok:false,error:{code:'NONEXISTENT_TIME'}});
@@ -29,5 +32,27 @@ describe('Sydney schedules', () => {
     const d={title:'Repaint',allDay:true,startDate:'2026-10-16',endDate:'2026-10-17'};
     expect(visitSchema.safeParse(d).success).toBe(true);
     for(const bad of [{...d,startDate:'2026-02-30'},{...d,endDate:'2026-10-15'},{...d,startsAt:'2026-10-16T00:00:00Z'},{...d,assigneeIds:['20000000-0000-4000-8000-000000000002','20000000-0000-4000-8000-000000000002']}]) expect(visitSchema.safeParse(bad).success).toBe(false);
+  });
+});
+
+describe('visit status transitions', () => {
+  const statuses:VisitStatus[]=['scheduled','in_progress','completed','cancelled'];
+  const supervisorCases:[VisitStatus,VisitStatus,boolean][]=[
+    ['scheduled','scheduled',true],['scheduled','in_progress',true],
+    ['scheduled','completed',true],['scheduled','cancelled',false],
+    ['in_progress','scheduled',false],['in_progress','in_progress',true],
+    ['in_progress','completed',true],['in_progress','cancelled',false],
+    ['completed','scheduled',false],['completed','in_progress',false],
+    ['completed','completed',true],['completed','cancelled',false],
+    ['cancelled','scheduled',false],['cancelled','in_progress',false],
+    ['cancelled','completed',false],['cancelled','cancelled',true],
+  ];
+  it.each(supervisorCases)('supervisor %s → %s allowed=%s', (from,to,allowed) => {
+    const change=()=>assertVisitTransition({role:'supervisor',from,to});
+    if(allowed)expect(change).not.toThrow();
+    else expect(change).toThrowError(expect.objectContaining({name:'WorkflowError',code:'INVALID_TRANSITION',message:expect.stringMatching(/\S/)}));
+  });
+  it.each(statuses.flatMap(from=>statuses.map(to=>({from,to}))))('admin $from → $to is allowed, including reopening and no-ops', ({from,to}) => {
+    expect(()=>assertVisitTransition({role:'admin',from,to})).not.toThrow();
   });
 });

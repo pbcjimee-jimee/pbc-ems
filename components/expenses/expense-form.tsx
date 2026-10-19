@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { CommandFields, TextArea } from '@/components/clients/client-form';
 import { ReceiptUpload } from './receipt-upload';
 import type { Expense } from '@/lib/expenses/service';
-export function ExpenseFeedback({ state }: { state: ExpenseFormState }) { return state.result ? state.result.ok ? <p role="status">Saved.</p> : <div className="alert" role="alert"><p>{state.result.error.message}</p>{state.result.error.code === 'VERSION_CONFLICT' ? <a href="">Reload the latest record</a> : null}</div> : null; }
+export function ExpenseFeedback({ state }: { state: ExpenseFormState }) { return state.result ? state.result.ok ? <p role="status" className="alert notice-success">Saved.</p> : <div className="alert notice-danger" role="alert"><p>{state.result.error.message}</p>{state.result.error.code === 'VERSION_CONFLICT' ? <a href="">Reload the latest record</a> : null}</div> : null; }
 export function ReceiptLink({ expenseId }: { expenseId: string }) {
   const [pending, start] = useTransition(); const [error, setError] = useState(''); const [url, setUrl] = useState('');
   return <div><Button type="button" variant="secondary" loading={pending} onClick={() => start(async () => { const result = await receiptLinkAction(expenseId); if (result.ok) { setUrl(result.data.url); setError(''); } else { setUrl(''); setError(result.error.message); } })}>Get private receipt link</Button>{url ? <p role="status"><a href={url} target="_blank" rel="noreferrer">Download receipt (link valid for 60 seconds)</a></p> : null}{error ? <p role="alert">{error}</p> : null}</div>;

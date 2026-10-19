@@ -8,21 +8,30 @@ import {commandMetaSchema,invalidResult} from '@/lib/clients/schemas';
 import type {Result,Versioned} from '@/lib/domain/types';
 import {visitSchema,statusSchema,scheduleRangeSchema,scheduleFilterSchema} from './schemas';
 import {addDays,sydneyMidnight,visitInterval} from './dates';
-import type {Visit,ConflictWarning,SavedVisit,ScheduleOptions} from './types';
+import type {Visit,VisitStatus,ConflictWarning,SavedVisit,ScheduleOptions} from './types';
+import {assertVisitTransition} from './transitions';
 const columns=`v.id,v.version,v.title,v.description,v.type,v.status,v.all_day as "allDay",v.start_date::text as "startDate",v.end_date::text as "endDate",v.starts_at::text as "startsAt",v.ends_at::text as "endsAt",v.job_id as "jobId",v.request_id as "requestId",j.title as "jobTitle",r.title as "requestTitle",c.display_name as "clientName",p.address,
  coalesce((select jsonb_agg(jsonb_build_object('id',a.user_id,'name',m.display_name) order by m.display_name) from ems.visit_assignments a join ems.memberships m on m.organization_id=a.organization_id and m.user_id=a.user_id where a.organization_id=v.organization_id and a.visit_id=v.id),'[]'::jsonb) as assignees`;
 const joins=`from ems.visits v left join ems.jobs j on j.id=v.job_id and j.organization_id=v.organization_id left join ems.requests r on r.id=v.request_id and r.organization_id=v.organization_id left join ems.clients c on c.id=coalesce(j.client_id,r.client_id) and c.organization_id=v.organization_id left join ems.properties p on p.id=coalesce(j.property_id,r.property_id) and p.organization_id=v.organization_id`;
 async function mutation<T>(work:(tx:EmsTx)=>Promise<T>):Promise<Result<T>> {try{return {ok:true,data:await withEmsTransaction(work)};}catch(error){return {ok:false,error:error instanceof WorkflowError?{code:error.code,message:error.message}:{code:'SAVE_FAILED',message:'The visit could not be saved. Check your connection and try again.'}};}}
+async function updateJobSchedule(tx:EmsTx,jobId:string,status:'scheduled'|'unscheduled'):Promise<void> {
+  const org=tx.actor.organizationId;
+  // Lock before counting visits so a competing job update cannot leave a stale decision.
+  await tx.query('select id from ems.jobs where id=$1 and organization_id=$2 for update',[jobId,org]);
+  const [changed]=await tx.query<Versioned>(`update ems.jobs j set status=$3,version=j.version+1,updated_at=now() where j.id=$1 and j.organization_id=$2 and j.status=$4 and ($3='scheduled' or not exists(select 1 from ems.visits v where v.job_id=j.id and v.organization_id=j.organization_id and v.status<>'cancelled')) returning j.id,j.version`,[jobId,org,status,status==='scheduled'?'unscheduled':'scheduled']);
+  if(changed)await recordActivity(tx,'job',jobId,'status_changed',{status,reason:'visit_rescheduled'});
+}
 export async function saveVisit(input:unknown,meta:unknown):Promise<Result<SavedVisit>> {
   const parsed=visitSchema.safeParse(input);if(!parsed.success)return invalidResult(parsed.error);const command=commandMetaSchema.safeParse(meta);if(!command.success)return invalidResult(command.error);const d=parsed.data;
   return mutation(async tx=>{
     if(tx.actor.role!=='admin')throw new WorkflowError('FORBIDDEN','Only administrators can change dates, details and assignments.');await requireAdmin(tx);
     return runCommand(tx,'visit.save',command.data,d,async()=>{
       const org=tx.actor.organizationId;const id=d.id??randomUUID();
-      // Serialize the conflict snapshot and job scheduling decision across concurrent saves.
+      // Serialize conflict snapshots and job scheduling decisions across visit mutations.
       await tx.query('select pg_advisory_xact_lock(hashtextextended($1,0))',[`schedule:${org}`]);
       let before:Record<string,unknown>|null=null;
-      if(d.id){const [current]=await tx.query<Versioned&{snapshot:Record<string,unknown>}>(`select id,version,jsonb_build_object('allDay',all_day,'startsAt',starts_at,'endsAt',ends_at,'startDate',start_date,'endDate',end_date,'status',status,'jobId',job_id,'requestId',request_id) as snapshot from ems.visits where id=$1 and organization_id=$2 for update`,[id,org]);if(!current)throw new WorkflowError('NOT_FOUND','Visit not found.');requireVersion(current.version,command.data.expectedVersion);const assigned=await tx.query<{user_id:string}>('select user_id from ems.visit_assignments where visit_id=$1 and organization_id=$2 order by user_id',[id,org]);before={...current.snapshot,assigneeIds:assigned.map(a=>a.user_id)};}else requireVersion(0,command.data.expectedVersion);
+      let previousJobId:string|null=null;
+      if(d.id){const [current]=await tx.query<Versioned&{snapshot:Record<string,unknown>&{status:VisitStatus;jobId:string|null}}>(`select id,version,jsonb_build_object('allDay',all_day,'startsAt',starts_at,'endsAt',ends_at,'startDate',start_date,'endDate',end_date,'status',status,'jobId',job_id,'requestId',request_id) as snapshot from ems.visits where id=$1 and organization_id=$2 for update`,[id,org]);if(!current)throw new WorkflowError('NOT_FOUND','Visit not found.');requireVersion(current.version,command.data.expectedVersion);if(current.snapshot.status!==d.status)assertVisitTransition({role:tx.actor.role,from:current.snapshot.status,to:d.status});previousJobId=current.snapshot.jobId;const assigned=await tx.query<{user_id:string}>('select user_id from ems.visit_assignments where visit_id=$1 and organization_id=$2 order by user_id',[id,org]);before={...current.snapshot,assigneeIds:assigned.map(a=>a.user_id)};}else requireVersion(0,command.data.expectedVersion);
       let job:{client_id:string;property_id:string|null;status:string}|undefined;
       if(d.jobId){[job]=await tx.query<{client_id:string;property_id:string|null;status:string}>('select client_id,property_id,status from ems.jobs where id=$1 and organization_id=$2 and archived_at is null for update',[d.jobId,org]);if(!job||job.status==='cancelled')throw new WorkflowError('INVALID_JOB','Choose an active job.');}
       if(d.requestId){const [request]=await tx.query<{client_id:string;property_id:string|null}>('select client_id,property_id from ems.requests where id=$1 and organization_id=$2 and archived_at is null for share',[d.requestId,org]);if(!request)throw new WorkflowError('INVALID_REQUEST','Choose an active request.');if(job&&(job.client_id!==request.client_id||job.property_id!==request.property_id))throw new WorkflowError('LINK_MISMATCH','The job and request must refer to the same customer and work site.');}
@@ -32,7 +41,8 @@ export async function saveVisit(input:unknown,meta:unknown):Promise<Result<Saved
       const [saved]=d.id?await tx.query<Versioned>('update ems.visits set job_id=$1,request_id=$2,title=$3,description=$4,type=$5,status=$6,all_day=$7,starts_at=$8,ends_at=$9,start_date=$10,end_date=$11,version=version+1,updated_at=now() where id=$12 and organization_id=$13 returning id,version',values):await tx.query<Versioned>('insert into ems.visits(job_id,request_id,title,description,type,status,all_day,starts_at,ends_at,start_date,end_date,id,organization_id) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) returning id,version',values);
       await tx.query('delete from ems.visit_assignments where visit_id=$1 and organization_id=$2',[id,org]);
       for(const userId of d.assigneeIds)await tx.query('insert into ems.visit_assignments(organization_id,visit_id,user_id) values($1,$2,$3)',[org,id,userId]);
-      if(d.jobId&&d.status!=='cancelled')await tx.query("update ems.jobs set status='scheduled',version=version+1,updated_at=now() where id=$1 and organization_id=$2 and status='unscheduled'",[d.jobId,org]);
+      if(d.jobId&&d.status!=='cancelled')await updateJobSchedule(tx,d.jobId,'scheduled');
+      if(previousJobId&&(d.status==='cancelled'||previousJobId!==d.jobId))await updateJobSchedule(tx,previousJobId,'unscheduled');
       await recordActivity(tx,'visit',id,d.id?'updated':'created',{before,after:{allDay:d.allDay,startsAt:d.startsAt,endsAt:d.endsAt,startDate:d.startDate,endDate:d.endDate,status:d.status,jobId:d.jobId,requestId:d.requestId,assigneeIds:d.assigneeIds}});return {...saved,warnings};
     });
   });
@@ -40,9 +50,13 @@ export async function saveVisit(input:unknown,meta:unknown):Promise<Result<Saved
 export async function changeVisitStatus(id:unknown,status:unknown,meta:unknown):Promise<Result<SavedVisit>> {
   const parsed=z.object({id:z.uuid(),status:statusSchema,meta:commandMetaSchema}).strict().safeParse({id,status,meta});if(!parsed.success)return invalidResult(parsed.error);const d=parsed.data;
   return mutation(tx=>runCommand(tx,'visit.status',d.meta,{id:d.id,status:d.status},async()=>{
-    const [visit]=await tx.query<Versioned>('select id,version from ems.visits where id=$1 and organization_id=$2 for update',[d.id,tx.actor.organizationId]);if(!visit)throw new WorkflowError('NOT_FOUND','Assigned visit not found.');requireVersion(visit.version,d.meta.expectedVersion);
-    if(tx.actor.role!=='admin'&&d.status==='cancelled')throw new WorkflowError('FORBIDDEN','Ask an administrator to cancel this visit.');
-    const [saved]=await tx.query<Versioned>('update ems.visits set status=$1,version=version+1,updated_at=now() where id=$2 and organization_id=$3 returning id,version',[d.status,d.id,tx.actor.organizationId]);await recordActivity(tx,'visit',d.id,'status_changed',{status:d.status});return {...saved,warnings:[]};
+    const org=tx.actor.organizationId;
+    await tx.query('select pg_advisory_xact_lock(hashtextextended($1,0))',[`schedule:${org}`]);
+    const [visit]=await tx.query<Versioned&{status:VisitStatus;jobId:string|null}>('select id,version,status,job_id as "jobId" from ems.visits where id=$1 and organization_id=$2 for update',[d.id,org]);if(!visit)throw new WorkflowError('NOT_FOUND','Assigned visit not found.');requireVersion(visit.version,d.meta.expectedVersion);
+    assertVisitTransition({role:tx.actor.role,from:visit.status,to:d.status});
+    const [saved]=await tx.query<Versioned>('update ems.visits set status=$1,version=version+1,updated_at=now() where id=$2 and organization_id=$3 returning id,version',[d.status,d.id,org]);
+    if(tx.actor.role==='admin'&&visit.jobId)await updateJobSchedule(tx,visit.jobId,d.status==='cancelled'?'unscheduled':'scheduled');
+    await recordActivity(tx,'visit',d.id,'status_changed',{status:d.status});return {...saved,warnings:[]};
   }));
 }
 export async function readVisit(id:string):Promise<Visit|null>{if(!z.uuid().safeParse(id).success)return null;return withEmsTransaction(async tx=>(await tx.query<Visit>(`select ${columns} ${joins} where v.id=$1 and v.organization_id=$2`,[id,tx.actor.organizationId]))[0]??null);}

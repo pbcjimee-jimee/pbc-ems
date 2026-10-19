@@ -55,3 +55,18 @@ Hover/focus/active/disabled/loading are consistent. Errors preserve input and id
 No page-load choreography or decorative motion; reduced motion leaves immediate static feedback.
 Supervisor UI prioritizes assigned work and personal records; no hidden finance in its data payload.
 
+
+## Shared components (2026-10-20 Jobber-informed update)
+
+All pages compose `components/ui/**`; do not hand-roll these patterns per page.
+
+- `PageHeader`: back link, eyebrow (record number), title, meta row (status + client + amount), actions (secondary, `MoreMenu`, primary last).
+- `Tabs` (status filters with count badges, real URLs) and `Segmented` (view switchers such as Day/Week/Month/List).
+- `FilterBar` + `SelectFilter`: search first, filters, Apply/Reset. Status lives in tabs, not a duplicate select.
+- `DataTable`: the primary cell holds the real record link; at ≤40rem rows become stacked cards using `data-label`.
+- `Card` (title, count, action, flush), `DetailList`, `Metric`, `Notice` (info/success/warning/danger), `EmptyState` (icon + next action), `Pagination`.
+- `StatusBadge`: one lifecycle tone/label map for every record type; dot + text, never colour alone.
+- `WorkflowTrail`: Request → Quote → Job → Invoice links on detail pages. Supervisors never see Quote/Invoice stages.
+- Detail pages use `.detail-layout`: main work column + sticky summary sidebar (sidebar moves above main under 1100px).
+- Field actions (Start visit / Complete visit, Record time) sit directly under the header so they are reachable on a phone without scrolling.
+- Mobile shell: top bar + bottom tab bar (Home, Schedule, Jobs, Time, More). The sidebar Create menu is the single create entry on desktop; `/` focuses global search.

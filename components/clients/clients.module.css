@@ -1,0 +1,16 @@
+.nameCell{display:flex;align-items:center;gap:12px;min-width:0}
+.nameCell>span:last-child{min-width:0}
+.sites{list-style:none;margin:0;padding:0}
+.site{padding:16px 20px;border-bottom:1px solid #e6ebf1}
+.site:last-child{border-bottom:0}
+.siteHead{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.siteHead h3{display:flex;align-items:center;gap:8px;margin:0 0 4px;font-size:15px}
+.siteAddress{display:flex;gap:6px;color:var(--color-muted);margin:0;white-space:pre-wrap}
+.siteAddress svg{flex-shrink:0;margin-top:3px}
+.siteNotes{margin:8px 0 0;font-size:13px;color:var(--color-muted);white-space:pre-wrap}
+.siteActions{display:flex;gap:8px;flex-wrap:wrap}
+.siteEdit{margin-top:12px}
+.contact{display:flex;align-items:center;gap:8px;min-height:32px;overflow-wrap:anywhere}
+.contact svg{color:var(--color-subtle);flex-shrink:0}
+.tags{display:flex;flex-wrap:wrap;gap:6px}
+.tag{display:inline-flex;padding:2px 10px;border-radius:999px;background:#eef2f7;color:var(--color-muted);font-size:12px;font-weight:600}

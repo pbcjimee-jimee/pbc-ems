@@ -15,7 +15,26 @@ import { invoiceBalance,invoicePaymentStatus } from './totals';
 export type Payment=Versioned&{amount:string;receivedOn:string;method:string;reference:string|null;notes:string|null;voidedAt:string|null};
 export type InvoiceSummary=Versioned&{number:string;title:string;status:string;clientId:string;propertyId:string|null;clientName:string;jobId:string|null;issuedOn:string|null;dueOn:string|null;subtotal:string;tax:string;total:string;balance:string;paid:string;paymentStatus:string;overdue:boolean};
 export type InvoiceDetail=InvoiceSummary&{snapshot:CommercialSnapshot;customer:CustomerSnapshot;payments:Payment[]};
+export type InvoiceTabKey=z.infer<typeof invoiceListSchema>['status'];
+export type InvoicePipeline={
+  draft:{count:number};
+  outstanding:{count:number;amount:string};
+  overdue:{count:number;amount:string};
+};
 const columns='i.id,i.version,i.number,i.title,i.status,i.client_id as "clientId",i.property_id as "propertyId",c.display_name as "clientName",i.job_id as "jobId",i.issued_on::text as "issuedOn",i.due_on::text as "dueOn",i.subtotal,i.tax,i.total';
+const paymentTotalsJoin="left join lateral(select coalesce(sum(p.amount),0) paid from ems.payments p where p.invoice_id=i.id and p.organization_id=i.organization_id and p.voided_at is null) p on true";
+const outstandingCondition="i.status='issued' and i.total-p.paid>0";
+const invoiceTabConditions:Record<InvoiceTabKey,string>={
+  all:'true',
+  draft:"i.status='draft'",
+  issued:"i.status='issued'",
+  outstanding:outstandingCondition,
+  overdue:`${outstandingCondition} and i.due_on<$4::date`,
+  unpaid:"i.status='issued' and p.paid=0 and i.total>0",
+  partial:"i.status='issued' and p.paid>0 and i.total-p.paid>0",
+  paid:"i.status='issued' and i.total-p.paid<=0",
+  void:"i.status='void'",
+};
 type LockedInvoice=Versioned&{status:string;total:string;issued_on:string|null;due_on:string|null};
 async function lockInvoice(tx:EmsTx,id:string,version:number):Promise<LockedInvoice>{
   const [invoice]=await tx.query<LockedInvoice>('select id,version,status,total,issued_on::text,due_on::text from ems.invoices where id=$1 and organization_id=$2 for update',[id,tx.actor.organizationId]);
@@ -106,7 +125,7 @@ export async function voidPayment(id:unknown,meta:unknown):Promise<Result<Versio
   }));
 }
 function withBalance<T extends {status:string;total:string;dueOn:string|null}>(invoice:T,payments:Payment[]){
-  const balance=invoiceBalance(invoice,payments);const today=sydneyToday();return {...invoice,balance,paid:new Decimal(invoice.total).sub(balance).toFixed(2),paymentStatus:invoicePaymentStatus(invoice,payments),overdue:invoice.status==='issued'&&new Decimal(balance).gt(0)&&!!invoice.dueOn&&invoice.dueOn<today};
+  const rawBalance=invoiceBalance(invoice,payments);const balance=invoice.status==='issued'?rawBalance:'0.00';const today=sydneyToday();return {...invoice,balance,paid:new Decimal(invoice.total).sub(rawBalance).toFixed(2),paymentStatus:invoicePaymentStatus(invoice,payments),overdue:invoice.status==='issued'&&new Decimal(balance).gt(0)&&!!invoice.dueOn&&invoice.dueOn<today};
 }
 export async function readInvoice(id:string):Promise<InvoiceDetail|null>{
   return withEmsTransaction(async tx=>{await requireAdmin(tx);if(!z.uuid().safeParse(id).success)return null;
@@ -116,10 +135,27 @@ export async function readInvoice(id:string):Promise<InvoiceDetail|null>{
 export async function listInvoices(input:unknown={}){
   const p=invoiceListSchema.safeParse(input);const filter=p.success?p.data:invoiceListSchema.parse({});
   return withEmsTransaction(async tx=>{await requireAdmin(tx);
-    const from="from ems.invoices i join ems.clients c on c.id=i.client_id and c.organization_id=i.organization_id left join lateral(select coalesce(sum(p.amount),0) paid from ems.payments p where p.invoice_id=i.id and p.organization_id=i.organization_id and p.voided_at is null) p on true";
-    const where="i.organization_id=$1 and ($2='' or i.title ilike '%'||$2||'%' or i.number ilike '%'||$2||'%' or c.display_name ilike '%'||$2||'%') and ($3='all' or i.status=$3 or ($3='paid' and i.status='issued' and i.total-p.paid<=0) or ($3='partial' and i.status='issued' and p.paid>0 and i.total-p.paid>0) or ($3='unpaid' and i.status='issued' and p.paid=0 and i.total>0) or ($3='outstanding' and i.status='issued' and i.total-p.paid>0) or ($3='overdue' and i.status='issued' and i.due_on<$4::date and i.total-p.paid>0))";const values=[tx.actor.organizationId,filter.search,filter.status,sydneyToday()];
-    const [count]=await tx.query<{total:string}>(`select count(*)::text total ${from} where ${where}`,values);
-    const rows=await tx.query<Omit<InvoiceSummary,'paymentStatus'|'overdue'>>(`select ${columns},p.paid::text as paid,(i.total-p.paid)::text as balance ${from} where ${where} order by i.updated_at desc,i.id limit 25 offset $5`,[...values,(filter.page-1)*25]);
-    const items=rows.map(r=>({...r,paymentStatus:invoicePaymentStatus(r,[{amount:r.paid}]),overdue:r.status==='issued'&&new Decimal(r.balance).gt(0)&&!!r.dueOn&&r.dueOn<sydneyToday()}));return {items,total:Number(count.total),page:filter.page,pageSize:25,filter};
+    const today=sydneyToday();
+    const from=`from ems.invoices i join ems.clients c on c.id=i.client_id and c.organization_id=i.organization_id ${paymentTotalsJoin}`;
+    const searchWhere="i.organization_id=$1 and ($2='' or i.title ilike '%'||$2||'%' or i.number ilike '%'||$2||'%' or c.display_name ilike '%'||$2||'%')";
+    const statusWhere=Object.entries(invoiceTabConditions).map(([key,condition])=>`($3='${key}' and (${condition}))`).join(' or ');
+    const where=`${searchWhere} and (${statusWhere})`;const values=[tx.actor.organizationId,filter.search,filter.status,today];
+    const countColumns=Object.entries(invoiceTabConditions).map(([key,condition])=>`count(*) filter (where ${condition})::text as "${key}"`).join(',');
+    const [count]=await tx.query<Record<InvoiceTabKey|'total',string>>(`select count(*) filter (where ${statusWhere})::text total,${countColumns} ${from} where ${searchWhere}`,values);
+    const counts:Record<InvoiceTabKey,number>={all:Number(count.all),draft:Number(count.draft),issued:Number(count.issued),outstanding:Number(count.outstanding),overdue:Number(count.overdue),unpaid:Number(count.unpaid),partial:Number(count.partial),paid:Number(count.paid),void:Number(count.void)};
+    const rows=await tx.query<Omit<InvoiceSummary,'paymentStatus'|'overdue'>>(`select ${columns},p.paid::text as paid,(case when i.status='issued' then i.total-p.paid else 0.00 end)::text as balance ${from} where ${where} order by i.updated_at desc,i.id limit 25 offset $5`,[...values,(filter.page-1)*25]);
+    const items=rows.map(r=>({...r,paymentStatus:invoicePaymentStatus(r,[{amount:r.paid}]),overdue:r.status==='issued'&&new Decimal(r.balance).gt(0)&&!!r.dueOn&&r.dueOn<today}));return {items,total:Number(count.total),page:filter.page,pageSize:25,filter,counts};
   });
+}
+export async function readInvoicePipeline(tx:EmsTx,today:string):Promise<InvoicePipeline>{
+  if(tx.actor.role!=='admin')throw new WorkflowError('FORBIDDEN','Administrator permission required.');
+  const overdueCondition=`${outstandingCondition} and i.due_on<$2::date`;
+  const [row]=await tx.query<{draft:string;outstanding:string;outstandingAmount:string;overdue:string;overdueAmount:string}>(`select
+    count(*) filter (where i.status='draft')::text as draft,
+    count(*) filter (where ${outstandingCondition})::text as outstanding,
+    coalesce(sum(i.total-p.paid) filter (where ${outstandingCondition}),0)::text as "outstandingAmount",
+    count(*) filter (where ${overdueCondition})::text as overdue,
+    coalesce(sum(i.total-p.paid) filter (where ${overdueCondition}),0)::text as "overdueAmount"
+    from ems.invoices i ${paymentTotalsJoin} where i.organization_id=$1`,[tx.actor.organizationId,today]);
+  return {draft:{count:Number(row.draft)},outstanding:{count:Number(row.outstanding),amount:new Decimal(row.outstandingAmount).toFixed(2)},overdue:{count:Number(row.overdue),amount:new Decimal(row.overdueAmount).toFixed(2)}};
 }

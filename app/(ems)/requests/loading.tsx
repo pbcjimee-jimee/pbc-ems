@@ -1,1 +1,2 @@
-export default function LoadingRequests() { return <p className="alert" role="status">Loading requests…</p>; }
+import { LoadingState } from "@/components/ui/route-states";
+export default function LoadingRequests() { return <LoadingState label="Loading requests…" />; }
