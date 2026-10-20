@@ -29,7 +29,7 @@ Ownership:
 Observable acceptance:
   - npm run typecheck && npm run lint 통과
   - npx vitest run --no-file-parallelism --exclude "tests/integration/**"
-    결과가 12 passed / 192 tests. 1 skipped 면 작업을 멈추고 보고한다
+    결과에 skipped 가 0. 하나라도 있으면 작업을 멈추고 보고한다
     (회귀 기준선 미검증 상태인데 초록불로 보인다).
   - 2026-03-02(일) 입력이 2026-02-23 시작 주차로 계산된다.
   - 완료 후 커밋: git add <Target> && git commit -m "<요약>"

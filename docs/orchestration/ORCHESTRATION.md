@@ -77,7 +77,7 @@ worker는 대화 맥락이 없다. 다섯 항목을 모두 채운다 — 하나�
 | **Change** | 만들어낼 구체적 결과 |
 | **Constraints** | `AGENTS.md` 금지 항목 전체 + 이번 작업 제약 |
 | **Ownership** | 목록 밖은 읽기만. 필요하면 수정하지 말고 보고 |
-| **Observable acceptance** | **12 passed / 192 tests**. `1 skipped`면 회귀 미검증이므로 멈추고 보고 |
+| **Observable acceptance** | **스킵 0**이 판정 기준(숫자는 테스트가 늘면 바뀐다). `skipped`가 있으면 회귀 미검증이므로 멈추고 보고 |
 
 작업 완료 시 커밋을 명시한다. 커밋하지 않으면 병합할 수 없다.
 

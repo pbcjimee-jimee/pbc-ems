@@ -21,7 +21,7 @@ npm run typecheck && npm run lint
 npx vitest run --no-file-parallelism --exclude "tests/integration/**"
 ```
 
-정상은 **12 passed / 192 tests**. `1 skipped`면 멈추고 보고한다 — `.local/operating-cases.json` 부재로 견적 회귀 기준선이 검증되지 않은 상태인데 초록불로 보인다.
+판정 기준은 **스킵 0**이다(2026-10-20 기준 13 passed / 324 tests — 테스트가 늘면 숫자는 바뀐다). `skipped`가 1개라도 있으면 멈추고 보고한다 — `.local/operating-cases.json` 부재로 견적 회귀 기준선이 검증되지 않은 상태인데 초록불로 보인다.
 
 ## 금지 (전역 자원)
 
