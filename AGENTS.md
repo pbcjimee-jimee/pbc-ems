@@ -32,8 +32,10 @@ npx vitest run --no-file-parallelism --exclude "tests/integration/**"
 
 ## 오케스트레이션
 
-팀장(Fable 5.1)이 분석·계획·분배·검토·통합. 구현은 `ui-ux`·`test`(Opus 5.5, 메인 저장소)와 Codex 4역할(worktree)에 위임.
+팀장(Fable 5.1)이 분석·계획·분배·검토·통합. UI·테스트는 `ui-ux`·`test` Claude 서브에이전트(Opus 5.5, 메인 저장소), 로직·분석은 Orca `/orchestration` worker(Codex 4역할)에 위임한다.
 
 `ui-ux`·`test`·팀장은 **메인 저장소를 공유해 git 격리가 없다.** 파일 범위가 겹치면 순차 실행한다.
 
-상세: `docs/orchestration/ORCHESTRATION.md`(역할·실행·병렬), `OWNERSHIP.md`(경로별 소유), `TASK-TEMPLATE.md`(Codex 지시서).
+새 worktree는 `scripts/worktree-setup.ps1`이 선행된다 — git worktree에는 `node_modules`·`.env.local`·`.local/`이 없어 검증이 실패하거나 조용히 스킵된다.
+
+상세: `docs/orchestration/ORCHESTRATION.md`(역할·Orca 실행·병렬), `OWNERSHIP.md`(경로별 소유), `TASK-TEMPLATE.md`(Task spec).

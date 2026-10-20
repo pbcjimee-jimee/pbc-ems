@@ -1,76 +1,71 @@
-# Codex 작업 지시서 템플릿
+# Task spec 템플릿
 
-Codex는 별도 프로세스라 대화 맥락이 없다. **이 파일 하나로 완결되게** 쓴다. `tasks/T-<번호>-<slug>.md`로 복사.
+Orca worker는 대화 맥락이 없다. `--spec` 하나로 완결되게 쓴다. 실행 절차는 [ORCHESTRATION.md](./ORCHESTRATION.md).
 
-Claude 서브에이전트(`ui-ux`·`test`)는 역할 정의에 원칙·금지·검증이 이미 있으므로 지시서 파일이 필요 없다. Agent 프롬프트에 요구사항·담당 파일·완료 조건·이번 작업 제약만 담는다.
+Claude 서브에이전트(`ui-ux`·`test`)는 역할 정의에 원칙·금지·검증이 이미 있으므로 Agent 프롬프트에 요구사항·담당 파일·완료 조건만 담는다.
 
-## 템플릿
+## Orca worker (--spec)
 
-```markdown
-# T-000: <제목>
+Orca가 요구하는 5개 항목을 모두 채운다.
 
-## 역할 / 실행
-implementer · gpt-6.1-sol · high · workspace-write
-작업 폴더: C:/Users/kjm12/pbc-ems-worktrees/T-000 (브랜치 wt/T-000)
+```text
+Target: lib/schedule/dates.ts, lib/schedule/service.ts
 
-## 배경
-<왜 필요한지 2~4줄>
+Change: 주차 계산이 월요일 시작 기준으로 동작하게 수정한다.
+  현재 일요일 시작으로 계산되어 주간 근무기록 집계가 하루 밀린다.
 
-## 요구사항
-1. <검증 가능한 단위>
+Constraints:
+  - AGENTS.md 의 금지 항목 전체를 지킨다. 특히 npm install 과
+    통합 테스트 실행(test:integration, test:run)은 금지.
+  - 금액은 decimal.js, 시간대는 Australia/Sydney
+    (lib/domain/sydney-date-time.ts 사용).
+  - 요구사항에 없는 리팩터링은 하지 않는다.
 
-## 담당 파일 (쓰기 허용)
-- `lib/<path>.ts`
-- `tests/<path>.test.ts`
+Ownership:
+  위 Target 만 쓰기 가능. 목록 밖은 읽기만.
+  수정이 필요하다고 판단하면 수정하지 말고 근거와 함께 보고한다.
+  UI(app/**, components/**)는 ui-ux 담당이므로 건드리지 않는다.
 
-목록 밖은 읽기만. 수정이 필요하면 **수정하지 말고 근거와 함께 보고**한다.
-
-## 참고 (읽기만)
-- `PRODUCT.md`, `lib/<유사 모듈>.ts`
-
-## 완료 조건
-- [ ] <"X 입력에 Y 반환" 형태. "동작한다"는 쓰지 않는다>
-
-## 검증
-`AGENTS.md`의 검증 명령을 따른다. 정상은 12 passed / 192 tests.
-`1 skipped`면 작업을 멈추고 보고한다.
-
-## 범위 밖
-`AGENTS.md`의 금지 항목 전체. 추가로 UI(`app/**`, `components/**`)는 `ui-ux` 담당,
-요구사항에 없는 리팩터링 금지.
-
-## 완료 후
-`git add <담당 파일> && git commit -m "T-000: <요약>"`
-커밋하지 않으면 팀장이 병합할 수 없다.
-
-## 보고
-`ORCHESTRATION.md`의 보고 요구를 따른다. 커밋 해시를 포함한다.
+Observable acceptance:
+  - npm run typecheck && npm run lint 통과
+  - npx vitest run --no-file-parallelism --exclude "tests/integration/**"
+    결과가 12 passed / 192 tests. 1 skipped 면 작업을 멈추고 보고한다
+    (회귀 기준선 미검증 상태인데 초록불로 보인다).
+  - 2026-03-02(일) 입력이 2026-02-23 시작 주차로 계산된다.
+  - 완료 후 커밋: git add <Target> && git commit -m "<요약>"
+    커밋하지 않으면 병합할 수 없다.
 ```
 
-## 역할별 실행값
+읽기 전용 역할(`analyst`·`explorer`)은 Ownership 대신 **산출물**을 쓴다 — 분석 결과만 보고, 제품 코드 수정 금지, 확인한 사실과 추정 구분, 파일 경로·줄 번호 명시.
 
-| 역할 | 모델 | effort | 샌드박스 | 폴더 |
-| --- | --- | --- | --- | --- |
-| `analyst` | `gpt-6-astra` | xhigh | read-only | main |
-| `explorer` | `gpt-6-astra` | high | read-only | main |
-| `implementer` | `gpt-6.1-sol` | high | workspace-write | worktree |
-| `quick_edit` | `gpt-6-luna` | high | workspace-write | worktree |
+## Claude 서브에이전트 (Agent 프롬프트)
 
-`analyst`·`explorer`는 담당 파일 절 대신 **산출물**(분석 결과만, 사실과 추정 구분, 경로·줄 번호)을 쓴다.
-`quick_edit`에는 인증·권한·결제·데이터 무결성·보안·다중 모듈 작업을 맡기지 않는다. 복잡성이 드러나면 `implementer` 인계를 요청하게 한다.
+```text
+요구사항: Clients 목록에 상태 필터를 추가한다.
+배경: 현재 전체 목록만 보여 활성/비활성 구분이 안 된다.
+담당 파일:
+  - components/clients/client-list.tsx
+  - app/(ems)/clients/page.tsx
+완료 조건:
+  - 상태 필터(전체/활성/비활성)가 URL 쿼리에 반영된다
+  - 필터 변경 시 목록이 갱신되고 빈 결과에 빈 상태가 표시된다
+  - 키보드로 조작 가능하고 포커스가 보인다
+제약: lib/clients/** 는 읽기만. 서비스 변경이 필요하면 보고.
+```
 
-실행 명령은 [ORCHESTRATION.md](./ORCHESTRATION.md) 참조. 쓰기 역할은 `worktree-setup.ps1`이 선행된다.
+독립 작업은 한 메시지에 여러 Agent 호출을 묶어 동시 실행한다. 단 `ui-ux`와 `test`는 main을 공유하므로 **파일 범위가 겹치지 않을 때만**.
 
 ## 흔한 실수
 
 | 실수 | 교정 |
 | --- | --- |
-| UI·테스트를 Codex 지시서로 만든다 | `ui-ux`·`test`에 위임 |
+| UI·테스트를 Orca worker 로 띄운다 | `ui-ux`·`test` 서브에이전트에 위임 |
 | `ui-ux`와 `test`를 같은 파일에 동시 투입 | main 공유 — 범위 분리 또는 순차 |
 | 서브에이전트 작업 중 팀장이 같은 파일 수정 | 담당 파일을 건드리지 않는다 |
-| `codex exec --worktree` 사용 | 스크립트로 준비한 worktree를 `-C`로 |
-| 검증에 `test:run` 포함 | `--exclude "tests/integration/**"` |
+| 새 worktree에 `worktree-setup.ps1` 생략 | `node_modules`·`.env.local` 부재로 검증 실패 |
+| Observable acceptance 에 `test:run` 포함 | 공유 DB 리셋 — `--exclude` 형태로 |
 | `1 skipped`를 통과로 본다 | 회귀 기준선 미검증 — 멈추고 보고 |
-| 담당 파일을 "해당 모듈"로 뭉갠다 | 경로를 전부 나열 |
-| 완료 조건이 "정상 동작" | 관측 가능한 입출력으로 |
-| 완료 후 커밋 요구 누락 | 병합 불가 |
+| Target 을 "해당 모듈"로 뭉갠다 | 경로를 전부 나열 |
+| acceptance 가 "정상 동작" | 관측 가능한 입출력으로 |
+| 커밋 요구 누락 | 병합 불가 |
+| worker 의 모델 자기보고를 근거로 쓴다 | 영수증 `launch.effective` 확인 |

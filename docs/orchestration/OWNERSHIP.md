@@ -45,7 +45,9 @@
 ## 읽기만
 
 `.local/**`(junction 공유), `.next/**`, `node_modules/**`, `.superpowers/**`, `*.tsbuildinfo`, `supabase/.temp/**`.
-Codex 가능: `docs/{evidence,qa}/**`, `docs/orchestration/results/**`(자기 ID 파일만).
+worker 가능: `docs/{evidence,qa}/**`, `docs/orchestration/results/**`(자기 ID 파일만).
+
+`docs/orchestration/{tasks,results}/**`는 T-001~T-010 작업 이력이다. Orca 전환 후 Task·Dispatch 상태는 Orca가 보관하므로 새 작업에 필수는 아니지만, 긴 지시서나 남길 가치가 있는 결과는 계속 이 규칙(`T-<번호>`)으로 기록한다. 기존 파일은 삭제하지 않는다.
 
 ## 격리되지 않는 자원
 
